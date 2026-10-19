@@ -1,0 +1,23 @@
+# Dependencias (lo más pesado)
+node_modules/
+
+# Compilados
+dist/
+out/
+*.tsbuildinfo
+
+# Secretos y configuración local: NUNCA se suben
+.env
+.env.*
+!.env.example
+
+# Logs y temporales
+*.log
+npm-debug.log*
+coverage/
+
+# Sistema operativo y editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json

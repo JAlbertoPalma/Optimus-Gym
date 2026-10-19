@@ -1,0 +1,14 @@
+{
+  "name": "optimusgym",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "api:dev": "npm run start:dev -w apps/api",
+    "api:build": "npm run build -w apps/api",
+    "db:migrar": "npm run db:migrar -w apps/api",
+    "db:semilla": "npm run db:semilla -w apps/api",
+    "db:reiniciar": "npm run db:reiniciar -w apps/api",
+    "api:probar": "npm run probar -w apps/api"
+  }
+}
