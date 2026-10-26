@@ -9,7 +9,8 @@
     "db:migrar": "tsx db/migrar.ts",
     "db:semilla": "tsx db/semilla.ts",
     "db:reiniciar": "tsx db/reiniciar.ts",
-    "probar": "tsx test/humo.ts"
+    "probar": "tsx test/humo.ts",
+    "probar:gestion": "tsx test/humo-gestion.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

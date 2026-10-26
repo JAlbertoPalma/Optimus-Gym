@@ -1,0 +1,132 @@
+/* OptimusGym · Demo CU-02 Administrar Clientes · estilos de la interfaz (sin framework). */
+:root {
+  --color-fondo: #0f1720;
+  --color-tarjeta: #18222e;
+  --color-texto: #e8eef5;
+  --color-texto-secundario: #8fa3b8;
+  --color-acento: #ff6b1a;
+  --color-exito: #2ecc71;
+  --color-error: #ff5c5c;
+  --color-borde: #2a3a4b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 15px system-ui, sans-serif;
+  background: var(--color-fondo);
+  color: var(--color-texto);
+}
+
+header {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--color-borde);
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.logo { color: var(--color-acento); font-size: 20px; font-weight: bold; }
+.subtitulo { color: var(--color-texto-secundario); }
+header nav { margin-left: auto; display: flex; gap: 8px; }
+
+main { max-width: 1000px; margin: auto; padding: 20px; }
+
+section {
+  background: var(--color-tarjeta);
+  border: 1px solid var(--color-borde);
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+h2 { margin: 0 0 12px; font-size: 18px; }
+h3 { margin: 16px 0 8px; font-size: 14px; color: var(--color-texto-secundario); }
+
+label { display: block; font-size: 12px; color: var(--color-texto-secundario); margin: 10px 0 4px; }
+
+input, select, textarea {
+  width: 100%;
+  padding: 9px;
+  border-radius: 8px;
+  border: 1px solid var(--color-borde);
+  background: var(--color-fondo);
+  color: var(--color-texto);
+  font: inherit;
+}
+textarea { resize: vertical; min-height: 60px; }
+
+.fila-dos-campos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 640px) { .fila-dos-campos { grid-template-columns: 1fr; } }
+
+button {
+  margin-top: 6px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-acento);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: progress; }
+button.secundario { background: #2a3a4b; }
+button.peligro { background: #8a2b2b; }
+a.boton-enlace {
+  display: inline-block;
+  padding: 9px 14px;
+  border-radius: 8px;
+  background: #2a3a4b;
+  color: var(--color-texto);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+/* Mensaje de negocio (éxito/error) por pantalla */
+.mensaje { margin-top: 12px; padding: 10px; border-radius: 8px; display: none; }
+.mensaje.visible { display: block; }
+.mensaje-exito { background: #1b3a2a; color: var(--color-exito); }
+.mensaje-error { background: #3a1f1f; color: var(--color-error); }
+
+/* Error por campo (debajo de cada input) */
+.error-campo { color: var(--color-error); font-size: 12px; margin-top: 4px; min-height: 0; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--color-borde); font-size: 13px; }
+th { color: var(--color-texto-secundario); }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: #1e2a38; }
+
+.etiqueta-estatus { padding: 2px 8px; border-radius: 99px; font-size: 11px; background: #223; }
+.etiqueta-estatus.inactivo { background: #3a1f1f; color: var(--color-error); }
+.etiqueta-estatus.activo { background: #1b3a2a; color: var(--color-exito); }
+
+.barra-filtros { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; margin-bottom: 12px; }
+.barra-filtros > div { flex: 1; min-width: 160px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--color-texto-secundario);
+}
+
+small { color: var(--color-texto-secundario); }
+.vacio { color: var(--color-texto-secundario); padding: 16px 0; }
+.dato { margin: 4px 0; }
+.dato span { color: var(--color-texto-secundario); }
+
+/* Ventana modal (editar, enrolar, baja) */
+.fondo-modal {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 24px; overflow: auto; z-index: 10;
+}
+.modal {
+  background: var(--color-tarjeta);
+  border: 1px solid var(--color-borde);
+  border-radius: 12px;
+  padding: 20px;
+  width: 100%; max-width: 520px;
+}
+.modal-encabezado { display: flex; justify-content: space-between; align-items: center; }
+.modal .acciones { display: flex; gap: 8px; margin-top: 14px; }
+.cerrar { background: none; color: var(--color-texto-secundario); font-size: 20px; padding: 0 6px; margin: 0; }

@@ -10,7 +10,7 @@
     "esModuleInterop": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "npmbaseUrl": "./",
+    
     "incremental": true,
     "skipLibCheck": true,
     "strict": true,

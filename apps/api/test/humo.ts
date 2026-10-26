@@ -53,5 +53,7 @@ const alta = (o: any = {}) => ({
   chequear('SF-01 filtro por estatus', r.estado === 200 && Array.isArray(r.json));
 
   console.log(`\nResultado: ${ok} correctas, ${fallos} fallidas`);
-  process.exit(fallos ? 1 : 0);
+  // Se marca el código de salida y se deja terminar el proceso solo (sin process.exit()):
+  // en Windows, salir de golpe con conexiones fetch aún abiertas provoca un fallo de libuv.
+  process.exitCode = fallos ? 1 : 0;
 })();
