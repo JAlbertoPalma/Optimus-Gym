@@ -36,6 +36,9 @@ export class ActualizarClienteDto {
 }
 
 // SF-04: dar de baja exige siempre un motivo.
+// El @Transform quita los espacios ANTES de validar; sin él, un motivo de puros espacios
+// pasaba @IsNotEmpty y la baja se guardaba con el motivo vacío.
 export class DarDeBajaDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString() @IsNotEmpty({ message: 'El motivo de baja es obligatorio' }) @MaxLength(250) motivo: string;
 }

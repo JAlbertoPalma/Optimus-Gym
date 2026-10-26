@@ -34,7 +34,14 @@ export class FiltroErrores implements ExceptionFilter {
     if (e instanceof HttpException) {
       return res.status(e.getStatus()).json({ codigo: 'HTTP_' + e.getStatus(), mensaje: e.message });
     }
-    // 3) Cualquier otro error inesperado: se imprime en la consola del servidor,
+    // 3) Errores de Express al LEER la petición (JSON mal escrito, cuerpo de más de 100 KB).
+    //    Traen su propio estado 4xx; sin este caso caían al 500 y parecía un fallo del servidor.
+    const estadoExpress = (e as { status?: unknown })?.status;
+    if (typeof estadoExpress === 'number' && estadoExpress >= 400 && estadoExpress < 500) {
+      const mensaje = estadoExpress === 413 ? 'La petición es demasiado grande' : 'La petición no tiene un formato válido';
+      return res.status(estadoExpress).json({ codigo: 'PETICION_INVALIDA', mensaje });
+    }
+    // 4) Cualquier otro error inesperado: se imprime en la consola del servidor,
     //    pero al usuario solo se le da un mensaje genérico (no se exponen detalles internos)
     console.error(e);
     return res.status(500).json({ codigo: 'ERROR_INTERNO', mensaje: 'Error interno del servidor' });

@@ -325,7 +325,8 @@ function modalHuella(codigo) {
     <form id="form-huella" novalidate>
       ${campoCapturaHuella(false)}
       <small>Si el dedo ya tiene huella, se reemplaza (reenrolamiento). "Repetir" reutiliza la última captura para probar el bloqueo por duplicado.</small>
-      <div class="acciones"><button type="submit">Capturar y guardar</button><button type="button" class="secundario" data-cerrar>Cancelar</button></div>`);
+      <div class="acciones"><button type="submit">Capturar y guardar</button><button type="button" class="secundario" data-cerrar>Cancelar</button></div>
+    </form>`);
   modal.querySelector('[data-cerrar]').addEventListener('click', cerrarModal);
   modal.querySelector('#form-huella').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -347,7 +348,8 @@ function modalBaja(codigo) {
     <form id="form-baja" novalidate>
       <label>Motivo de baja (obligatorio)</label>
       <textarea name="motivo"></textarea><div class="error-campo" data-error="motivo"></div>
-      <div class="acciones"><button type="submit" class="peligro">Confirmar baja</button><button type="button" class="secundario" data-cerrar>Cancelar</button></div>`);
+      <div class="acciones"><button type="submit" class="peligro">Confirmar baja</button><button type="button" class="secundario" data-cerrar>Cancelar</button></div>
+    </form>`);
   modal.querySelector('[data-cerrar]').addEventListener('click', cerrarModal);
   modal.querySelector('#form-baja').addEventListener('submit', async (e) => {
     e.preventDefault();

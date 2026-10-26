@@ -31,14 +31,9 @@ export class ClientesService {
     // Empleado que hace el registro; se guarda en la bitácora de auditoría
     const idEmpleado = await this.sesion.idEmpleadoActual();
 
-    // FA-06: reglas de datos (el formato ya lo validó el DTO; aquí se revisa que no sea fecha futura)
-    const nac = new Date(dto.fechaNacimiento);
-    if (isNaN(nac.getTime()) || nac > new Date())
-      throw new ErrorNegocio('DATOS_INVALIDOS', 'La fecha de nacimiento no es válida', 422, { fechaNacimiento: 'No puede ser futura' });
+    // FA-06: reglas de datos (el formato ya lo validó el DTO; aquí se revisa que la fecha tenga sentido)
+    this.validarFechaNacimiento(dto.fechaNacimiento);
 
-    if(nac.getFullYear() <= 1800)
-      throw new ErrorNegocio('DATOS INVALIDOS', 'La fecha de nacimiento no es válida', 422, {fechaNacimiento: 'Nadie tiene más de 200 años...'})
-    
     // FA-08: alta sin huella exige motivo
     if (!dto.huella && !dto.observacionesAcceso?.trim())
       throw new ErrorNegocio('MOTIVO_REQUERIDO', 'Sin huella, debes registrar el motivo en Observaciones de acceso', 422,
@@ -158,6 +153,20 @@ export class ClientesService {
         ORDER BY p.apellido_paterno, p.nombres LIMIT 200`, params);
   }
 
+  /** FA-06: valida la fecha de nacimiento. La usan el alta (registrarCliente) y la edición (actualizarCliente). */
+  private validarFechaNacimiento(fecha: string) {
+    const invalida = (motivo: string) =>
+      new ErrorNegocio('DATOS_INVALIDOS', 'La fecha de nacimiento no es válida', 422, { fechaNacimiento: motivo });
+    // El DTO solo revisa el FORMATO. "2023-02-30" tiene buen formato pero no existe:
+    // JavaScript la convierte en silencio al 2 de marzo y PostgreSQL la rechaza con un error 500.
+    // Por eso se arma la fecha y se comprueba que el mes y el día no hayan cambiado.
+    const [anio, mes, dia] = fecha.slice(0, 10).split('-').map(Number);
+    const nac = new Date(Date.UTC(anio, mes - 1, dia));
+    if (isNaN(nac.getTime()) || nac.getUTCMonth() !== mes - 1 || nac.getUTCDate() !== dia) throw invalida('Esa fecha no existe');
+    if (nac > new Date()) throw invalida('No puede ser futura');
+    if (anio <= 1800) throw invalida('Nadie tiene más de 200 años...');
+  }
+
   /** Carga un cliente por su código visible (OG-00001). Lanza 404 si no existe.
    *  Acepta el manejador de una transacción (m) para usarse dentro de ella. */
   private async cargarCliente(codigo: string, m: DataSource | EntityManager = this.ds) {
@@ -202,14 +211,8 @@ export class ClientesService {
     if (c.estatus === 'INACTIVO')
       throw new ErrorNegocio('CLIENTE_INACTIVO', 'No se puede editar un cliente inactivo; reactívalo primero', 409);
 
-    // FA-06: la fecha de nacimiento (si viene) no puede ser futura ni absurda
-    if (dto.fechaNacimiento !== undefined) {
-      const nac = new Date(dto.fechaNacimiento);
-      if (isNaN(nac.getTime()) || nac > new Date())
-        throw new ErrorNegocio('DATOS_INVALIDOS', 'La fecha de nacimiento no es válida', 422, { fechaNacimiento: 'No puede ser futura' });
-      if (nac.getFullYear() <= 1800)
-        throw new ErrorNegocio('DATOS_INVALIDOS', 'La fecha de nacimiento no es válida', 422, { fechaNacimiento: 'Nadie tiene más de 200 años...' });
-    }
+    // FA-06: la fecha de nacimiento (si viene) debe tener sentido
+    if (dto.fechaNacimiento !== undefined) this.validarFechaNacimiento(dto.fechaNacimiento);
 
     // Normaliza: trim a textos y trata '' como null (sin valor)
     const norm = (v: any) => {

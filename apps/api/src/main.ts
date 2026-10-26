@@ -19,6 +19,25 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';
 import { AppModule } from './app.module';
 import { ErrorNegocio, FiltroErrores } from './comun/errores';
+import { CALIDAD_MINIMA, UMBRAL_DUPLICADO } from './huellas/comparador-huellas.service';
+
+// Revisa el .env al arrancar. Es mejor que la API no inicie y diga qué falta,
+// a que arranque y falle a media operación (por ejemplo, al cifrar la primera huella).
+function validarConfiguracion() {
+  const errores: string[] = [];
+  if (!process.env.DATABASE_URL) errores.push('Falta DATABASE_URL');
+  if (!/^[0-9a-fA-F]{64}$/.test(process.env.CLAVE_CIFRADO ?? '')) errores.push('CLAVE_CIFRADO debe tener 64 caracteres hexadecimales');
+  // La tabla plantilla_biometrica tiene CHECK (calidad BETWEEN 70 AND 100): un mínimo menor a 70
+  // dejaría pasar huellas que la base de datos después rechaza con un error 500.
+  const calidad = CALIDAD_MINIMA();
+  if (!Number.isInteger(calidad) || calidad < 70 || calidad > 100) errores.push('CALIDAD_MINIMA debe ser un entero entre 70 y 100');
+  const umbral = UMBRAL_DUPLICADO();
+  if (!(umbral > 0 && umbral <= 100)) errores.push('UMBRAL_DUPLICADO debe ser un número mayor a 0 y hasta 100');
+  if (errores.length) {
+    console.error('Configuración inválida en apps/api/.env:\n  - ' + errores.join('\n  - '));
+    process.exit(1);
+  }
+}
 
 // Los errores de validación vienen anidados (ej. contactoEmergencia → telefono).
 // Esta función los convierte en un objeto plano:
@@ -34,6 +53,8 @@ function aplanar(errs: ValidationError[], prefijo = '', out: Record<string, stri
 }
 
 async function bootstrap() {
+  validarConfiguracion();
+
   // Crea la app a partir del módulo raíz (app.module.ts), que carga los demás módulos
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 

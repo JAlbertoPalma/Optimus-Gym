@@ -21,7 +21,9 @@ export class ContactoEmergenciaDto {
 export class HuellaDto {
   @IsInt() @Min(1) @Max(10) dedo: number; // 1 a 10
   /** Plantilla (minucias) en base64. Nunca la imagen de la huella. */
-  @IsString() @IsNotEmpty() plantillaBase64: string;
+  // Una plantilla real pesa unos cientos de bytes; 8192 caracteres deja margen y evita
+  // que alguien mande megabytes que luego se descifran y comparan contra todas las huellas.
+  @IsString() @IsNotEmpty() @MaxLength(8192, { message: 'La plantilla de huella es demasiado grande' }) plantillaBase64: string;
   // Aquí solo se valida el rango; la calidad mínima aceptada se revisa en clientes.service.ts (FA-02)
   @IsInt() @Min(0) @Max(100) calidad: number;
 }

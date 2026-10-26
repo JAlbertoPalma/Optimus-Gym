@@ -92,6 +92,8 @@ async function crearCliente(extra: any = {}) {
   // ---- Baja / reactivar (SF-04) ----
   r = await llamar('POST', '/api/v1/clientes/' + a.codigo + '/baja', {});
   chequear('SF-04 baja sin motivo → 422 con campo motivo', r.estado === 422 && !!r.json.campos?.motivo, JSON.stringify(r.json));
+  r = await llamar('POST', '/api/v1/clientes/' + a.codigo + '/baja', { motivo: '    ' });
+  chequear('SF-04 baja con motivo de solo espacios → 422', r.estado === 422 && !!r.json.campos?.motivo, JSON.stringify(r.json));
   r = await llamar('POST', '/api/v1/clientes/' + a.codigo + '/baja', { motivo: 'Dejó de asistir' });
   chequear('SF-04 baja con motivo → 200 INACTIVO', r.estado === 200 && r.json.estatus === 'INACTIVO', JSON.stringify(r.json));
   r = await llamar('POST', '/api/v1/clientes/' + a.codigo + '/baja', { motivo: 'Otra vez' });
