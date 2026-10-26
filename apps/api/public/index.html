@@ -1,62 +1,400 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OptimusGym · Demo CU-02</title>
-<style>
-:root{--bg:#0f1720;--card:#18222e;--tx:#e8eef5;--mut:#8fa3b8;--ac:#ff6b1a;--ok:#2ecc71;--er:#ff5c5c;--bd:#2a3a4b}
-*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--tx)}
-header{padding:16px 24px;border-bottom:1px solid var(--bd);display:flex;gap:12px;align-items:baseline}
-header b{color:var(--ac);font-size:20px}header span{color:var(--mut)}
-main{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:20px;padding:20px;max-width:1200px;margin:auto}
-@media(max-width:800px){main{grid-template-columns:1fr}}
-section{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:18px}
-h2{margin:0 0 12px;font-size:16px}label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
-input,select,textarea{width:100%;padding:9px;border-radius:8px;border:1px solid var(--bd);background:#0f1720;color:var(--tx);font:inherit}
-.f{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-button{margin-top:14px;padding:10px 14px;border:0;border-radius:8px;background:var(--ac);color:#fff;font-weight:600;cursor:pointer}
-button.s{background:transparent;border:1px solid var(--bd);color:var(--tx);margin-top:8px}
-#msg{margin-top:12px;padding:10px;border-radius:8px;display:none}
-.ok{background:#1b3a2a;color:var(--ok)}.er{background:#3a1f1f;color:var(--er)}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--bd);font-size:13px}th{color:var(--mut)}
-.tag{padding:2px 8px;border-radius:99px;background:#223;font-size:11px}
-small{color:var(--mut)}
-</style></head><body>
-<header><b>OptimusGym</b><span>Demo · CU-02 Administrar Clientes · registrarCliente</span></header>
-<main>
-<section><h2>Registrar cliente</h2>
-<form id="f">
-<div class="f"><div><label>Nombres</label><input name="nombres" required></div><div><label>Apellido paterno</label><input name="apellidoPaterno" required></div></div>
-<div class="f"><div><label>Apellido materno</label><input name="apellidoMaterno"></div><div><label>Fecha de nacimiento</label><input type="date" name="fechaNacimiento" required></div></div>
-<div class="f"><div><label>Sexo</label><select name="sexo"><option value="F">F</option><option value="M">M</option><option value="O">Otro</option></select></div><div><label>Teléfono (10 dígitos)</label><input name="telefono" required></div></div>
-<label>Correo</label><input name="correo" required>
-<div class="f"><div><label>Contacto emergencia</label><input name="ceNombre" required></div><div><label>Tel. contacto</label><input name="ceTelefono" required></div></div>
-<label>Huella (simulada)</label>
-<div class="f"><select id="huella"><option value="ok">Captura buena (calidad 88)</option><option value="baja">Captura mala (calidad 40)</option><option value="repetir">Misma huella que el último alta</option><option value="no">Sin huella</option></select><input id="obs" placeholder="Observaciones de acceso (si no hay huella)"></div>
-<button>Registrar</button><div id="msg"></div>
-</form></section>
-<section><h2>Clientes</h2><input id="q" placeholder="Buscar por nombre, código, teléfono o correo…">
-<table><thead><tr><th>Código</th><th>Nombre</th><th>Teléfono</th><th>Huella</th><th>Estatus</th></tr></thead><tbody id="t"></tbody></table>
-<small>Huella simulada: el lector real se integrará con su SDK.</small></section>
-</main>
-<script>
-let ultima=null;
-const rnd=()=>btoa(String.fromCharCode(...Array.from({length:64},()=>Math.floor(Math.random()*256))));
-const $=s=>document.querySelector(s);
-async function listar(){
-  const r=await fetch('/api/v1/clientes?q='+encodeURIComponent($('#q').value));const d=await r.json();
-  $('#t').innerHTML=d.map(c=>`<tr><td>${c.codigo}</td><td>${c.nombres} ${c.apellidoPaterno} ${c.apellidoMaterno||''}</td><td>${c.telefono}</td><td>${c.huellaEnrolada?'✔':'—'}</td><td><span class="tag">${c.estatus}</span></td></tr>`).join('');
-}
-$('#q').oninput=listar;
-$('#f').onsubmit=async e=>{
-  e.preventDefault();const v=Object.fromEntries(new FormData(e.target));const h=$('#huella').value;
-  const body={nombres:v.nombres,apellidoPaterno:v.apellidoPaterno,apellidoMaterno:v.apellidoMaterno||undefined,fechaNacimiento:v.fechaNacimiento,sexo:v.sexo,telefono:v.telefono,correo:v.correo,
-    contactoEmergencia:{nombre:v.ceNombre,telefono:v.ceTelefono},observacionesAcceso:$('#obs').value||undefined};
-  if(h==='ok'){ultima=rnd();body.huella={dedo:2,plantillaBase64:ultima,calidad:88}}
-  if(h==='baja')body.huella={dedo:2,plantillaBase64:rnd(),calidad:40};
-  if(h==='repetir')body.huella={dedo:2,plantillaBase64:ultima||rnd(),calidad:88};
-  const r=await fetch('/api/v1/clientes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const d=await r.json();const m=$('#msg');m.style.display='block';m.className=r.ok?'ok':'er';
-  m.textContent=r.ok?`✔ ${d.mensaje} · ${d.codigo}`:`✘ ${d.mensaje}`+(d.campos?' ('+Object.values(d.campos).join('; ')+')':'');
-  if(r.ok){e.target.reset();listar()}
-};
-listar();
-</script></body></html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OptimusGym · Demo CU-02</title>
+  <style>
+    /* Variables de color: se definen una vez y se reutilizan con var(--nombre) */
+    :root {
+      --color-fondo: #0f1720;
+      --color-tarjeta: #18222e;
+      --color-texto: #e8eef5;
+      --color-texto-secundario: #8fa3b8;
+      --color-acento: #ff6b1a;
+      --color-exito: #2ecc71;
+      --color-error: #ff5c5c;
+      --color-borde: #2a3a4b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font: 15px system-ui, sans-serif;
+      background: var(--color-fondo);
+      color: var(--color-texto);
+    }
+
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--color-borde);
+      display: flex;
+      gap: 12px;
+      align-items: baseline;
+    }
+
+    .logo {
+      color: var(--color-acento);
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .subtitulo {
+      color: var(--color-texto-secundario);
+    }
+
+    /* Dos columnas: formulario a la izquierda y lista de clientes a la derecha */
+    main {
+      display: grid;
+      grid-template-columns: minmax(300px, 420px) 1fr;
+      gap: 20px;
+      padding: 20px;
+      max-width: 1200px;
+      margin: auto;
+    }
+
+    /* En pantallas angostas (celular) las columnas se apilan */
+    @media (max-width: 800px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    section {
+      background: var(--color-tarjeta);
+      border: 1px solid var(--color-borde);
+      border-radius: 12px;
+      padding: 18px;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--color-texto-secundario);
+      margin: 10px 0 4px;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      padding: 9px;
+      border-radius: 8px;
+      border: 1px solid var(--color-borde);
+      background: var(--color-fondo);
+      color: var(--color-texto);
+      font: inherit;
+    }
+
+    /* Acomoda dos campos del formulario lado a lado */
+    .fila-dos-campos {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    button {
+      margin-top: 14px;
+      padding: 10px 14px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--color-acento);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Caja donde se muestra el resultado del registro; oculta hasta que haya mensaje */
+    #mensaje-resultado {
+      margin-top: 12px;
+      padding: 10px;
+      border-radius: 8px;
+      display: none;
+    }
+
+    .mensaje-exito {
+      background: #1b3a2a;
+      color: var(--color-exito);
+    }
+
+    .mensaje-error {
+      background: #3a1f1f;
+      color: var(--color-error);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid var(--color-borde);
+      font-size: 13px;
+    }
+
+    th {
+      color: var(--color-texto-secundario);
+    }
+
+    /* Etiqueta redondeada para mostrar el estatus del cliente */
+    .etiqueta-estatus {
+      padding: 2px 8px;
+      border-radius: 99px;
+      background: #223;
+      font-size: 11px;
+    }
+
+    small {
+      color: var(--color-texto-secundario);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="logo">OptimusGym</span>
+    <span class="subtitulo">Demo - CU-02 Administrar Clientes : registrarCliente</span>
+  </header>
+
+  <main>
+    <!-- ===== Columna izquierda: formulario de registro ===== -->
+    <section>
+      <h2>Registrar cliente</h2>
+
+      <!-- El atributo "name" de cada campo es la clave con la que se lee su valor en JavaScript -->
+      <form id="formulario-registro">
+        <div class="fila-dos-campos">
+          <div>
+            <label>Nombres</label>
+            <input name="nombres" required>
+          </div>
+          <div>
+            <label>Apellido paterno</label>
+            <input name="apellidoPaterno" required>
+          </div>
+        </div>
+
+        <div class="fila-dos-campos">
+          <div>
+            <label>Apellido materno</label>
+            <input name="apellidoMaterno">
+          </div>
+          <div>
+            <label>Fecha de nacimiento</label>
+            <input type="date" name="fechaNacimiento" required>
+          </div>
+        </div>
+
+        <div class="fila-dos-campos">
+          <div>
+            <label>Sexo</label>
+            <select name="sexo">
+              <option value="F">F</option>
+              <option value="M">M</option>
+              <option value="O">Otro</option>
+            </select>
+          </div>
+          <div>
+            <label>Teléfono (10 dígitos)</label>
+            <input name="telefono" required>
+          </div>
+        </div>
+
+        <label>Correo</label>
+        <input name="correo" required>
+
+        <div class="fila-dos-campos">
+          <div>
+            <label>Contacto emergencia</label>
+            <input name="contactoEmergenciaNombre" required>
+          </div>
+          <div>
+            <label>Tel. contacto</label>
+            <input name="contactoEmergenciaTelefono" required>
+          </div>
+        </div>
+
+        <label>Huella (simulada)</label>
+        <div class="fila-dos-campos">
+          <select id="opcion-huella">
+            <option value="buena">Captura buena (calidad 88)</option>
+            <option value="mala">Captura mala (calidad 40)</option>
+            <option value="repetida">Misma huella que el último alta</option>
+            <option value="sin-huella">Sin huella</option>
+          </select>
+          <input id="observaciones-acceso" placeholder="Observaciones de acceso (si no hay huella)">
+        </div>
+
+        <button>Registrar</button>
+        <div id="mensaje-resultado"></div>
+      </form>
+    </section>
+
+    <!-- ===== Columna derecha: lista y búsqueda de clientes ===== -->
+    <section>
+      <h2>Clientes</h2>
+      <input id="campo-busqueda" placeholder="Buscar por nombre, código, teléfono o correo…">
+
+      <table>
+        <thead>
+          <tr>
+            <th>Código</th>
+            <th>Nombre</th>
+            <th>Teléfono</th>
+            <th>Huella</th>
+            <th>Estatus</th>
+          </tr>
+        </thead>
+        <!-- Las filas se generan desde JavaScript en la función cargarClientes() -->
+        <tbody id="tabla-clientes"></tbody>
+      </table>
+
+      <small>Huella simulada: el lector real se integrará con su SDK.</small>
+    </section>
+  </main>
+
+  <script>
+    // ----- Referencias a los elementos de la página que vamos a usar -----
+    const formularioRegistro = document.querySelector('#formulario-registro');
+    const selectorHuella = document.querySelector('#opcion-huella');
+    const campoObservaciones = document.querySelector('#observaciones-acceso');
+    const mensajeResultado = document.querySelector('#mensaje-resultado');
+    const campoBusqueda = document.querySelector('#campo-busqueda');
+    const tablaClientes = document.querySelector('#tabla-clientes');
+
+    // Datos fijos de la huella simulada
+    const DEDO_INDICE_DERECHO = 2;
+    const CALIDAD_BUENA = 88;
+    const CALIDAD_MALA = 40;
+
+    // Guarda la última huella "buena" registrada, para poder probar la opción "repetida"
+    let ultimaHuellaRegistrada = null;
+
+    // Simula la plantilla que entregaría un lector de huellas real:
+    // 64 bytes aleatorios convertidos a texto Base64.
+    function generarHuellaSimulada() {
+      const bytesAleatorios = [];
+      for (let i = 0; i < 64; i++) {
+        bytesAleatorios.push(Math.floor(Math.random() * 256));
+      }
+      return btoa(String.fromCharCode(...bytesAleatorios));
+    }
+
+    // Pide al servidor la lista de clientes (filtrada por la búsqueda) y llena la tabla.
+    async function cargarClientes() {
+      const textoBusqueda = encodeURIComponent(campoBusqueda.value);
+      const respuesta = await fetch('/api/v1/clientes?q=' + textoBusqueda);
+      const clientes = await respuesta.json();
+
+      // Convierte cada cliente en una fila <tr> de HTML y las une en un solo texto
+      const filasHtml = clientes.map(cliente => {
+        const nombreCompleto = `${cliente.nombres} ${cliente.apellidoPaterno} ${cliente.apellidoMaterno || ''}`;
+        const iconoHuella = cliente.huellaEnrolada ? '✔' : '—';
+        return `
+          <tr>
+            <td>${cliente.codigo}</td>
+            <td>${nombreCompleto}</td>
+            <td>${cliente.telefono}</td>
+            <td>${iconoHuella}</td>
+            <td><span class="etiqueta-estatus">${cliente.estatus}</span></td>
+          </tr>`;
+      });
+
+      tablaClientes.innerHTML = filasHtml.join('');
+    }
+
+    // Arma el objeto "huella" según la opción elegida. Regresa undefined si no hay huella.
+    function construirHuella(opcionElegida) {
+      if (opcionElegida === 'buena') {
+        ultimaHuellaRegistrada = generarHuellaSimulada();
+        return { dedo: DEDO_INDICE_DERECHO, plantillaBase64: ultimaHuellaRegistrada, calidad: CALIDAD_BUENA };
+      }
+      if (opcionElegida === 'mala') {
+        return { dedo: DEDO_INDICE_DERECHO, plantillaBase64: generarHuellaSimulada(), calidad: CALIDAD_MALA };
+      }
+      if (opcionElegida === 'repetida') {
+        // Reutiliza la última huella para que el servidor detecte que está duplicada
+        const plantilla = ultimaHuellaRegistrada || generarHuellaSimulada();
+        return { dedo: DEDO_INDICE_DERECHO, plantillaBase64: plantilla, calidad: CALIDAD_BUENA };
+      }
+      return undefined; // opción "sin-huella"
+    }
+
+    // Muestra el resultado del registro en verde (éxito) o rojo (error)
+    function mostrarMensaje(registroExitoso, datosRespuesta) {
+      mensajeResultado.style.display = 'block';
+
+      if (registroExitoso) {
+        mensajeResultado.className = 'mensaje-exito';
+        mensajeResultado.textContent = `✔ ${datosRespuesta.mensaje} · ${datosRespuesta.codigo}`;
+      } else {
+        mensajeResultado.className = 'mensaje-error';
+        let texto = `✘ ${datosRespuesta.mensaje}`;
+        // Si el servidor indica qué campos están mal, los agregamos al mensaje
+        if (datosRespuesta.campos) {
+          texto += ' (' + Object.values(datosRespuesta.campos).join('; ') + ')';
+        }
+        mensajeResultado.textContent = texto;
+      }
+    }
+
+    // Se ejecuta al presionar "Registrar"
+    async function registrarCliente(evento) {
+      evento.preventDefault(); // evita que el navegador recargue la página
+
+      // Lee todos los campos del formulario como { nombres: '...', telefono: '...', ... }
+      const valoresFormulario = Object.fromEntries(new FormData(formularioRegistro));
+
+      // Datos que se envían al servidor. Los campos opcionales vacíos se mandan
+      // como undefined para que no se incluyan en el JSON.
+      const datosCliente = {
+        nombres: valoresFormulario.nombres,
+        apellidoPaterno: valoresFormulario.apellidoPaterno,
+        apellidoMaterno: valoresFormulario.apellidoMaterno || undefined,
+        fechaNacimiento: valoresFormulario.fechaNacimiento,
+        sexo: valoresFormulario.sexo,
+        telefono: valoresFormulario.telefono,
+        correo: valoresFormulario.correo,
+        contactoEmergencia: {
+          nombre: valoresFormulario.contactoEmergenciaNombre,
+          telefono: valoresFormulario.contactoEmergenciaTelefono,
+        },
+        observacionesAcceso: campoObservaciones.value || undefined,
+        huella: construirHuella(selectorHuella.value),
+      };
+
+      const respuesta = await fetch('/api/v1/clientes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(datosCliente),
+      });
+      const datosRespuesta = await respuesta.json();
+
+      mostrarMensaje(respuesta.ok, datosRespuesta);
+
+      // Si se registró bien: limpia el formulario y recarga la tabla
+      if (respuesta.ok) {
+        formularioRegistro.reset();
+        cargarClientes();
+      }
+    }
+
+    // ----- Conectar eventos -----
+    campoBusqueda.addEventListener('input', cargarClientes); // busca mientras escribes
+    formularioRegistro.addEventListener('submit', registrarCliente);
+
+    // Carga la tabla en cuanto abre la página
+    cargarClientes();
+  </script>
+</body>
+</html>
