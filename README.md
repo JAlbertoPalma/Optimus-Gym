@@ -2,7 +2,7 @@
 
 Sistema de gestión de gimnasio con acceso biométrico. Proyecto Integrador ITSON · RUP · Elaboración E1.
 
-**Avance actual:** CU-02 Administrar Clientes completo en la API (alta, búsqueda, ficha, edición, enrolamiento/reenrolamiento de huella, baja lógica y reactivación) + migraciones 0001 y 0002 + interfaz web demo.
+**Avance actual:** CU-02 Administrar Clientes completo en la API (alta, búsqueda, ficha, edición, enrolamiento/reenrolamiento de huella, baja lógica y reactivación) + CU-04 Registrar venta de membresía (planes, promociones, cobro, vigencia y recibo) + migraciones 0001 a 0003 + interfaz web demo.
 
 ## Requisitos
 - Git, Node.js LTS (20 o 22), PostgreSQL 14+ (y DBeaver para ver las tablas)
@@ -25,6 +25,7 @@ npm run api:dev                   # API en http://localhost:3000
 ```bash
 npm install          # por si cambiaron dependencias
 npm run db:migrar    # aplica solo las migraciones nuevas, sin borrar datos
+npm run db:semilla   # agrega datos iniciales nuevos (ej. plan Trimestral y promociones del CU-04); no duplica ni cambia precios
 ```
 
 ## Pruebas
@@ -32,6 +33,8 @@ Con la API encendida, en otra terminal. Las dos suites se pueden repetir sin rei
 ```bash
 npm run api:probar           # alta y búsqueda   → 14 correctas
 npm run api:probar:gestion   # ficha, edición, huella, baja/reactivar → 26 correctas
+npm run api:probar:venta     # CU-04 venta, promociones, pagos, duplicados, renovación
+npm run api:probar:calculos  # CU-04 cálculos (no requiere la API encendida) → 29 correctas
 ```
 
 ## API (prefijo `/api/v1`)
@@ -45,19 +48,41 @@ npm run api:probar:gestion   # ficha, edición, huella, baja/reactivar → 26 co
 | POST | `/clientes/:codigo/baja` | Baja lógica (motivo obligatorio) | SF-04 |
 | POST | `/clientes/:codigo/reactivar` | Reactivar | SF-04 |
 
+| Método | Ruta | Qué hace | CU-04 |
+|---|---|---|---|
+| GET | `/ventas/catalogo` | Planes activos y métodos de pago | — |
+| GET | `/ventas/clientes/:codigo` | Cliente, membresía vigente y estado de acceso | — |
+| POST | `/ventas/cotizar` | Calcula precio, promociones, total y vigencia (no guarda) | — |
+| POST | `/ventas` | Registra la venta (idempotente por `claveIdempotencia`) | FB |
+| GET | `/ventas/:folio` | Recibo de una venta (reimpresión) | — |
+
+Interfaz de venta: http://localhost:3000/venta.html (o `venta.html?cliente=OG-00001`).
+
+### Reglas del CU-04
+- **Precios y promociones** se leen de `tipo_membresia` y `promocion`/`promocion_tipo_membresia`; el servidor recalcula el total (el navegador no envía importes a cobrar).
+- **Una promoción por venta.** Si exige documento, recepción debe registrar qué verificó.
+- **Vigencia ("extender sin perder días"):** con membresía vigente, la nueva inicia el día siguiente a su vencimiento; sin membresía o vencida, inicia hoy. Fin = inicio + duración − 1.
+- **Transaccional y sin duplicados:** membresía + pago + bitácora en una transacción; candado por cliente y `clave_idempotencia` única.
+- **Acceso:** se deriva de las membresías pagadas vigentes. El torniquete aún no está integrado.
+- **Permisos:** solo empleados activos con rol Administrador o Recepcionista.
+
 ## Estructura
 ```
 apps/api/
   db/migraciones/0001_modelo_fase1.sql          modelo de datos Fase 1 (11 tablas)
   db/migraciones/0002_cu02_gestion_clientes.sql dirección y versionado de huellas (activa/inactiva)
+  db/migraciones/0003_cu04_venta_membresia.sql  promociones, datos del cobro y folio de venta
   db/{migrar,semilla,reiniciar}.ts
   src/main.ts        arranque de la API y validación de la configuración
   src/clientes/      CU-02: controlador, servicio y DTOs (registrar y gestionar)
-  src/comun/         errores, cifrado AES-256-GCM, sesión demo provisional
+  src/ventas/        CU-04: controlador, servicio, DTOs y cálculos puros (calculos-venta.ts)
+  src/comun/         errores, cifrado AES-256-GCM, sesión demo provisional (con exigirRol)
   src/huellas/       comparador SIMULADO (se cambiará por el SDK del lector)
-  public/            interfaz web: index.html, app.js, estilos.css
+  public/            interfaz web: index.html, app.js, estilos.css · venta.html, venta.js, venta.css (CU-04)
   test/humo.ts           pruebas del alta y la búsqueda
   test/humo-gestion.ts   pruebas de la gestión del cliente
+  test/humo-venta.ts     pruebas de la venta de membresía (CU-04)
+  test/calculos-venta.ts pruebas unitarias de los cálculos del CU-04
 ```
 
 ## Notas importantes

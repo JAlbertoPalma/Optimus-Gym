@@ -10,7 +10,9 @@
     "db:semilla": "tsx db/semilla.ts",
     "db:reiniciar": "tsx db/reiniciar.ts",
     "probar": "tsx test/humo.ts",
-    "probar:gestion": "tsx test/humo-gestion.ts"
+    "probar:gestion": "tsx test/humo-gestion.ts",
+    "probar:calculos": "tsx test/calculos-venta.ts",
+    "probar:venta": "tsx test/humo-venta.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

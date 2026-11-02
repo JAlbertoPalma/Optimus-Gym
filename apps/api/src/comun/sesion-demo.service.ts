@@ -16,4 +16,15 @@ export class SesionDemoService {
     if (!r.length) throw new ErrorNegocio('SIN_SESION', 'No existe el usuario demo. Ejecuta npm run db:semilla', 500);
     return (this.id = r[0].id_persona); // asigna y regresa el valor en una sola línea
   }
+
+  /** Autorización: devuelve el id del empleado actual si está ACTIVO y tiene alguno de los roles; si no, 403.
+   *  Los roles se consultan siempre (sin caché) para que una baja o un cambio de rol aplique de inmediato. */
+  async exigirRol(...roles: string[]): Promise<number> {
+    const id = await this.idEmpleadoActual();
+    const [r] = await this.ds.query(
+      `SELECT EXISTS(SELECT 1 FROM empleado e JOIN empleado_rol er USING (id_persona) JOIN rol r USING (id_rol)
+                      WHERE e.id_persona = $1 AND e.estatus = 'ACTIVO' AND r.nombre = ANY($2)) AS autorizado`, [id, roles]);
+    if (!r.autorizado) throw new ErrorNegocio('SIN_PERMISO', `Esta operación requiere el rol: ${roles.join(' o ')}`, 403);
+    return id;
+  }
 }

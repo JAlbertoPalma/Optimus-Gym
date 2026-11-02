@@ -6,6 +6,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClientesModule } from './clientes/clientes.module';
 import { SaludController } from './salud/salud.controller';
+import { VentasModule } from './ventas/ventas.module';
 
 @Module({
   imports: [
@@ -16,6 +17,8 @@ import { SaludController } from './salud/salud.controller';
     TypeOrmModule.forRoot({ type: 'postgres', url: process.env.DATABASE_URL, synchronize: false, autoLoadEntities: true }),
     // CU-02 Administrar Clientes → ver clientes/clientes.module.ts
     ClientesModule,
+    // CU-04 Registrar venta de membresía → ver ventas/ventas.module.ts
+    VentasModule,
   ],
   // GET /health: sirve para comprobar que la API y la base de datos funcionan
   controllers: [SaludController],

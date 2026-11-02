@@ -12,7 +12,9 @@
     "db:semilla": "npm run db:semilla -w apps/api",
     "db:reiniciar": "npm run db:reiniciar -w apps/api",
     "api:probar": "npm run probar -w apps/api",
-    "api:probar:gestion": "npm run probar:gestion -w apps/api"
+    "api:probar:gestion": "npm run probar:gestion -w apps/api",
+    "api:probar:calculos": "npm run probar:calculos -w apps/api",
+    "api:probar:venta": "npm run probar:venta -w apps/api"
   },
   "dependencies": {
     "cors": "^2.8.6",
