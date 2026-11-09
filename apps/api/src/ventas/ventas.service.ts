@@ -1,8 +1,13 @@
 // SERVICIO DE VENTAS: reglas de negocio del CU-04 Registrar venta de membresía.
 // Lo llama ventas.controller.ts. Igual que clientes.service.ts, usa SQL directo con parámetros ($1, $2…).
 //
-// Principio: el BACKEND decide cuánto se cobra. El navegador solo dice qué cliente, qué plan y qué
-// promoción; aquí se leen precio y promoción de la BD, se valida todo y se recalcula el total.
+// Principio: el BACKEND decide cuánto se cobra. El navegador solo dice qué cliente y qué plan;
+// aquí se lee el precio de la BD, se valida todo y se recalcula el total. (Sin promociones por ahora.)
+//
+// Vigencia: la membresía nueva REEMPLAZA a la anterior (no se apilan días). La "membresía actual" de un
+// cliente es siempre la ÚLTIMA que se le vendió; las anteriores quedan como historial y ya no dan acceso.
+// Si la nueva vencería ANTES que la vigente, la venta se rechaza (PLAN_VENCE_ANTES); si no, se advierte
+// que se sobrescribirá la fecha de vencimiento.
 //
 // Una venta = 1 fila en membresia_contratada (vigencia) + 1 fila en pago (cobro) + bitácora,
 // todo en UNA transacción: si algo falla no queda ni el cobro sin membresía ni la membresía sin cobro.
@@ -10,9 +15,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { ErrorNegocio } from '../comun/errores';
 import { SesionDemoService } from '../comun/sesion-demo.service';
-import {
-  aCentavos, aPesos, calcularCambio, calcularDescuento, calcularVigencia, evaluarPromocion, PromocionEvaluable,
-} from './calculos-venta';
+import { aCentavos, aPesos, calcularCambio, calcularVigencia, revisarReemplazo } from './calculos-venta';
 import { CotizarVentaDto, METODOS_PAGO, RegistrarVentaDto } from './registrar-venta.dto';
 
 // Roles que pueden cobrar (tabla rol, ver db/semilla.ts)
@@ -26,13 +29,10 @@ type Conexion = DataSource | EntityManager;
 
 interface ClienteVenta {
   id_persona: number; codigo: string; nombre: string; telefono: string; foto: string | null;
-  fecha_nacimiento: string; estatus: string; conducta: string; observaciones_acceso: string | null;
+  estatus: string; conducta: string; observaciones_acceso: string | null;
 }
 
-interface PromocionBD extends PromocionEvaluable {
-  idPromocion: number; nombre: string; descripcion: string | null; tipoDescuento: 'MONTO' | 'PORCENTAJE';
-  valor: string; requisito: string | null; requiereVerificacion: boolean;
-}
+interface MembresiaActual { plan: string; fechaInicio: string; fechaFin: string }
 
 @Injectable()
 export class VentasService {
@@ -41,13 +41,18 @@ export class VentasService {
     private readonly sesion: SesionDemoService,
   ) {}
 
-  /** Planes activos y métodos de pago que se pueden registrar. */
+  /** Planes activos, métodos de pago y quién atiende (se muestra en la barra lateral). */
   async catalogo() {
-    await this.sesion.exigirRol(...ROLES_VENTA);
+    const idEmpleado = await this.sesion.exigirRol(...ROLES_VENTA);
     const planes = await this.ds.query(
       `SELECT id_tipo AS "idTipo", nombre, duracion_dias AS "duracionDias", precio, detalles
          FROM tipo_membresia WHERE activa ORDER BY duracion_dias, nombre`);
-    return { planes: planes.map((p: any) => ({ ...p, precio: Number(p.precio) })), metodosPago: METODOS_PAGO };
+    const [atiende] = await this.ds.query(
+      `SELECT trim(p.nombres || ' ' || p.apellido_paterno) AS nombre,
+              (SELECT string_agg(r.nombre, ', ' ORDER BY r.nombre) FROM empleado_rol er JOIN rol r USING (id_rol)
+                WHERE er.id_persona = p.id_persona) AS rol
+         FROM persona p WHERE p.id_persona = $1`, [idEmpleado]);
+    return { planes: planes.map((p: any) => ({ ...p, precio: Number(p.precio) })), metodosPago: METODOS_PAGO, atiende };
   }
 
   /** Datos del cliente para la venta: contacto, membresía vigente y estado de acceso. */
@@ -55,12 +60,9 @@ export class VentasService {
     await this.sesion.exigirRol(...ROLES_VENTA);
     const c = await this.cargarCliente(codigo, this.ds);
     const hoy = await this.hoy(this.ds);
-    const [vigente] = await this.ds.query(
-      `SELECT t.nombre AS plan, to_char(mc.fecha_inicio,'YYYY-MM-DD') AS "fechaInicio", to_char(mc.fecha_fin,'YYYY-MM-DD') AS "fechaFin"
-         FROM membresia_contratada mc JOIN tipo_membresia t USING (id_tipo)
-        WHERE mc.id_cliente = $1 AND mc.fecha_inicio <= $2::date AND mc.fecha_fin >= $2::date AND ${SIN_CANCELAR}
-        ORDER BY mc.fecha_fin DESC LIMIT 1`, [c.id_persona, hoy]);
-    const ultimoFin = await this.ultimoFin(c.id_persona, this.ds);
+    const actual = await this.membresiaActual(c.id_persona, this.ds);
+    // Solo la membresía actual cuenta: si ya venció, no da acceso (las anteriores fueron reemplazadas)
+    const vigente = actual && actual.fechaInicio <= hoy && actual.fechaFin >= hoy ? actual : null;
     const bloqueo = this.bloqueoCliente(c);
     // Estado de acceso DERIVADO de los datos reales: no hay una bandera que se pueda desincronizar.
     // Mientras no se cobre, una membresía elegida en pantalla no da acceso.
@@ -70,20 +72,24 @@ export class VentasService {
     return {
       codigo: c.codigo, nombre: c.nombre, telefono: c.telefono, foto: c.foto,
       estatus: c.estatus, conducta: c.conducta, observacionesAcceso: c.observaciones_acceso,
-      membresiaVigente: vigente ?? null, ultimoFin, acceso,
+      membresiaVigente: vigente, ultimoFin: actual?.fechaFin ?? null, acceso,
       puedeComprar: !bloqueo, motivoBloqueo: bloqueo?.mensaje ?? null, hoy,
     };
   }
 
-  /** Resumen del cobro sin guardar nada: precio, promociones aplicables, descuento, total y vigencia. */
+  /**
+   * Resumen del cobro sin guardar nada: precio, total y vigencia.
+   * No lanza error si el plan vence antes que la membresía actual: lo informa en "bloqueo" para que la
+   * pantalla lo muestre (registrar() sí lo rechaza). "advertencia" avisa que se sobrescribirá el vencimiento.
+   */
   async cotizar(dto: CotizarVentaDto) {
     await this.sesion.exigirRol(...ROLES_VENTA);
     const cliente = dto.codigoCliente ? await this.cargarCliente(dto.codigoCliente, this.ds) : null;
-    const calc = await this.calcular(this.ds, dto.idTipo, dto.idPromocion, cliente, await this.hoy(this.ds));
+    const calc = await this.calcular(this.ds, dto.idTipo, cliente, await this.hoy(this.ds));
     return {
-      plan: calc.plan, promocion: calc.promocion, descripcionDescuento: calc.descripcionDescuento,
-      precioOriginal: aPesos(calc.precioCent), descuento: aPesos(calc.descuentoCent), total: aPesos(calc.totalCent),
-      vigencia: calc.vigencia, promociones: calc.promociones,
+      plan: calc.plan, precioOriginal: aPesos(calc.precioCent), total: aPesos(calc.totalCent), vigencia: calc.vigencia,
+      bloqueo: calc.reemplazo.bloqueo ? { codigo: 'PLAN_VENCE_ANTES', mensaje: calc.reemplazo.bloqueo } : null,
+      advertencia: calc.reemplazo.advertencia,
     };
   }
 
@@ -110,14 +116,12 @@ export class VentasService {
         if (bloqueo) throw new ErrorNegocio(bloqueo.codigo, bloqueo.mensaje, 409);
 
         const hoy = await this.hoy(m);
-        const calc = await this.calcular(m, dto.idTipo, dto.idPromocion, c, hoy);
+        const calc = await this.calcular(m, dto.idTipo, c, hoy);
 
-        // Promociones con documento: recepción debe registrar qué verificó; no se asume que el cliente cumple.
-        if (calc.promocion?.requiereVerificacion && !dto.verificacionRequisito)
-          throw new ErrorNegocio('VERIFICACION_REQUERIDA', `La promoción "${calc.promocion.nombre}" requiere verificar: ${calc.promocion.requisito}`, 422,
-            { verificacionRequisito: 'Indica el documento revisado' });
+        // El plan nuevo vencería antes que la membresía vigente → el cliente perdería días ya pagados
+        if (calc.reemplazo.bloqueo) throw new ErrorNegocio('PLAN_VENCE_ANTES', calc.reemplazo.bloqueo, 409);
 
-        // El precio (o la promoción) cambió desde que se mostró el resumen → no cobrar un importe distinto al que vio el cliente
+        // El precio cambió desde que se mostró el resumen → no cobrar un importe distinto al que vio el cliente
         if (aCentavos(dto.totalEsperado) !== calc.totalCent)
           throw new ErrorNegocio('PRECIO_CAMBIO', `El total cambió a $${aPesos(calc.totalCent).toFixed(2)}. Revisa el resumen y confirma de nuevo.`, 409,
             undefined, { total: aPesos(calc.totalCent) });
@@ -146,26 +150,24 @@ export class VentasService {
 
         const v = calc.vigencia!; // con cliente siempre hay vigencia
         etapa = 'membresia';
+        // La anterior NO se borra ni se modifica (historial): deja de contar porque esta pasa a ser la última vendida.
         const [mem] = await m.query(
           'INSERT INTO membresia_contratada (id_cliente, id_tipo, fecha_inicio, fecha_fin) VALUES ($1,$2,$3,$4) RETURNING id_membresia',
           [c.id_persona, calc.plan.idTipo, v.inicio, v.fin]);
         etapa = 'venta';
         const [pago] = await m.query(
           `INSERT INTO pago (id_membresia, id_empleado, monto, descuento, metodo_pago, plan_nombre, plan_duracion_dias, precio_original,
-                             id_promocion, descripcion_descuento, verificacion_requisito, importe_recibido, cambio, referencia_pago, clave_idempotencia)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id_pago, folio_recibo`,
-          [mem.id_membresia, idEmpleado, aPesos(calc.totalCent), aPesos(calc.descuentoCent), dto.metodoPago,
+                             importe_recibido, cambio, referencia_pago, clave_idempotencia)
+           VALUES ($1,$2,$3,0,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id_pago, folio_recibo`,
+          [mem.id_membresia, idEmpleado, aPesos(calc.totalCent), dto.metodoPago,
            calc.plan.nombre, calc.plan.duracionDias, aPesos(calc.precioCent),
-           calc.promocion?.idPromocion ?? null, calc.descripcionDescuento,
-           calc.promocion?.requiereVerificacion ? dto.verificacionRequisito : null,
            recibidoCent === null ? null : aPesos(recibidoCent), cambioCent === null ? null : aPesos(cambioCent),
            referencia, dto.claveIdempotencia]);
         await m.query(
           `INSERT INTO registro_auditoria (id_empleado, id_persona, accion, detalle, entidad_afectada, id_registro_afectado)
            VALUES ($1,$2,'VENTA_MEMBRESIA',$3,'pago',$4)`,
           [idEmpleado, c.id_persona,
-           `${pago.folio_recibo} · ${calc.plan.nombre} · ${v.tipo} ${v.inicio} a ${v.fin} · total ${aPesos(calc.totalCent).toFixed(2)} · ${dto.metodoPago}`
-             + (calc.promocion ? ` · promoción ${calc.promocion.nombre}` : ''),
+           `${pago.folio_recibo} · ${calc.plan.nombre} · ${v.tipo} ${v.inicio} a ${v.fin} · total ${aPesos(calc.totalCent).toFixed(2)} · ${dto.metodoPago}`,
            pago.id_pago]);
         // TORNIQUETE: aún no hay integración. El acceso se deriva de membresia_contratada (ver estadoCliente),
         // así que al hacer COMMIT el cliente ya figura con acceso; aquí se notificará al controlador cuando exista.
@@ -213,8 +215,7 @@ export class VentasService {
     const [c] = await m.query(
       `SELECT p.id_persona, p.codigo,
               trim(p.nombres || ' ' || p.apellido_paterno || ' ' || coalesce(p.apellido_materno,'')) AS nombre,
-              p.telefono, p.foto, to_char(p.fecha_nacimiento,'YYYY-MM-DD') AS fecha_nacimiento,
-              c.estatus, c.conducta, c.observaciones_acceso
+              p.telefono, p.foto, c.estatus, c.conducta, c.observaciones_acceso
          FROM cliente c JOIN persona p USING (id_persona)
         WHERE p.codigo = $1 ${bloquear ? 'FOR UPDATE OF c' : ''}`, [codigo]);
     if (!c) throw new ErrorNegocio('NO_ENCONTRADO', 'No existe un cliente con ese código', 404);
@@ -228,11 +229,14 @@ export class VentasService {
     return null;
   }
 
-  /** Fecha de fin más lejana de las membresías no canceladas del cliente (null si nunca tuvo). */
-  private async ultimoFin(idPersona: number, m: Conexion): Promise<string | null> {
+  /** Membresía actual del cliente = la ÚLTIMA que se le vendió (no cancelada), aunque ya esté vencida. null si nunca tuvo. */
+  private async membresiaActual(idPersona: number, m: Conexion): Promise<MembresiaActual | null> {
     const [r] = await m.query(
-      `SELECT to_char(max(mc.fecha_fin),'YYYY-MM-DD') AS fin FROM membresia_contratada mc WHERE mc.id_cliente = $1 AND ${SIN_CANCELAR}`, [idPersona]);
-    return r.fin;
+      `SELECT t.nombre AS plan, to_char(mc.fecha_inicio,'YYYY-MM-DD') AS "fechaInicio", to_char(mc.fecha_fin,'YYYY-MM-DD') AS "fechaFin"
+         FROM membresia_contratada mc JOIN tipo_membresia t USING (id_tipo)
+        WHERE mc.id_cliente = $1 AND ${SIN_CANCELAR}
+        ORDER BY mc.fecha_fin DESC LIMIT 1`, [idPersona]);
+    return r ?? null;
   }
 
   /** Folio de la venta ya registrada con esa clave, o null. Si la clave se usó con OTRO cliente → 409. */
@@ -248,48 +252,24 @@ export class VentasService {
   }
 
   /** Núcleo del cálculo (lo comparten cotizar y registrar, así no puede haber dos versiones de la regla). */
-  private async calcular(m: Conexion, idTipo: number, idPromocion: number | undefined, cliente: ClienteVenta | null, hoy: string) {
+  private async calcular(m: Conexion, idTipo: number, cliente: ClienteVenta | null, hoy: string) {
     const [plan] = await m.query(
       `SELECT id_tipo AS "idTipo", nombre, duracion_dias AS "duracionDias", precio, detalles
          FROM tipo_membresia WHERE id_tipo = $1 AND activa`, [idTipo]);
     if (!plan) throw new ErrorNegocio('PLAN_NO_DISPONIBLE', 'El plan seleccionado no existe o ya no está disponible', 404);
 
-    const promos: PromocionBD[] = await m.query(
-      `SELECT pr.id_promocion AS "idPromocion", pr.nombre, pr.descripcion, pr.tipo_descuento AS "tipoDescuento", pr.valor,
-              to_char(pr.fecha_inicio,'YYYY-MM-DD') AS "fechaInicio", to_char(pr.fecha_fin,'YYYY-MM-DD') AS "fechaFin",
-              pr.requisito, pr.requiere_verificacion AS "requiereVerificacion", pr.edad_minima AS "edadMinima", pr.activa,
-              coalesce(array_agg(ptm.id_tipo) FILTER (WHERE ptm.id_tipo IS NOT NULL), '{}') AS planes
-         FROM promocion pr LEFT JOIN promocion_tipo_membresia ptm USING (id_promocion)
-        WHERE pr.activa GROUP BY pr.id_promocion ORDER BY pr.nombre`);
-    const fechaNac = cliente?.fecha_nacimiento ?? null;
-    const promociones = promos.map((p) => {
-      const motivo = evaluarPromocion(p, plan.idTipo, hoy, fechaNac);
-      return {
-        idPromocion: p.idPromocion, nombre: p.nombre, descripcion: p.descripcion, tipoDescuento: p.tipoDescuento,
-        valor: Number(p.valor), fechaInicio: p.fechaInicio, fechaFin: p.fechaFin, requisito: p.requisito,
-        requiereVerificacion: p.requiereVerificacion, aplicable: !motivo, motivo: motivo?.mensaje ?? null,
-      };
-    });
-
-    const precioCent = aCentavos(plan.precio);
-    let descuentoCent = 0;
-    let promocion: (typeof promociones)[number] | null = null;
-    if (idPromocion) {
-      const p = promos.find((x) => x.idPromocion === idPromocion);
-      if (!p) throw new ErrorNegocio('PROMOCION_NO_DISPONIBLE', 'La promoción no existe o ya no está disponible', 422);
-      const motivo = evaluarPromocion(p, plan.idTipo, hoy, fechaNac);
-      if (motivo) throw new ErrorNegocio(motivo.codigo, motivo.mensaje, 422);
-      descuentoCent = calcularDescuento(precioCent, p.tipoDescuento, p.valor);
-      promocion = promociones.find((x) => x.idPromocion === idPromocion)!;
+    let vigencia = null;
+    let reemplazo: { bloqueo: string | null; advertencia: string | null } = { bloqueo: null, advertencia: null };
+    if (cliente) {
+      const actual = await this.membresiaActual(cliente.id_persona, m);
+      vigencia = calcularVigencia(hoy, actual?.fechaFin ?? null, plan.duracionDias);
+      reemplazo = revisarReemplazo(hoy, actual?.fechaFin ?? null, vigencia.fin, actual?.plan);
     }
 
-    let vigencia = null;
-    if (cliente) vigencia = calcularVigencia(hoy, await this.ultimoFin(cliente.id_persona, m), plan.duracionDias);
-
+    const precioCent = aCentavos(plan.precio);
     return {
       plan: { idTipo: plan.idTipo, nombre: plan.nombre, duracionDias: plan.duracionDias, precio: Number(plan.precio), detalles: plan.detalles },
-      promocion, promociones, vigencia, precioCent, descuentoCent, totalCent: precioCent - descuentoCent,
-      descripcionDescuento: promocion ? `Descuento ${promocion.nombre.toLowerCase()}` : null,
+      vigencia, reemplazo, precioCent, totalCent: precioCent, // sin promociones: total = precio
     };
   }
 
@@ -299,8 +279,7 @@ export class VentasService {
       `SELECT pa.folio_recibo AS folio, to_char(pa.fecha_hora,'YYYY-MM-DD HH24:MI:SS') AS "fechaHora", pa.estatus,
               coalesce(pa.plan_nombre, t.nombre) AS plan, coalesce(pa.plan_duracion_dias, t.duracion_dias) AS "duracionDias",
               to_char(mc.fecha_inicio,'YYYY-MM-DD') AS "fechaInicio", to_char(mc.fecha_fin,'YYYY-MM-DD') AS "fechaFin",
-              coalesce(pa.precio_original, pa.monto + pa.descuento) AS "precioOriginal", pa.descuento,
-              pa.descripcion_descuento AS "descripcionDescuento", pa.verificacion_requisito AS "verificacionRequisito",
+              coalesce(pa.precio_original, pa.monto + pa.descuento) AS "precioOriginal",
               pa.monto AS total, pa.metodo_pago AS "metodoPago", pa.importe_recibido AS "importeRecibido", pa.cambio,
               pa.referencia_pago AS "referenciaPago",
               pc.codigo AS "clienteCodigo",
@@ -317,7 +296,7 @@ export class VentasService {
     const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
     return {
       gimnasio: 'Optimus Gym', ...r,
-      precioOriginal: num(r.precioOriginal), descuento: num(r.descuento), total: num(r.total),
+      precioOriginal: num(r.precioOriginal), total: num(r.total),
       importeRecibido: num(r.importeRecibido), cambio: num(r.cambio),
     };
   }

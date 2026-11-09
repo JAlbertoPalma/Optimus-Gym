@@ -1,5 +1,5 @@
 // Optimus Gym · CU-04 Registrar venta de membresía · interfaz (sin framework ni build).
-// El navegador NO calcula lo que se cobra: precio, descuento, total y vigencia los calcula
+// El navegador NO calcula lo que se cobra: precio, total y vigencia los calcula
 // la API (POST /ventas/cotizar) y se vuelven a validar al registrar (POST /ventas).
 // Aquí solo se calcula el CAMBIO para mostrarlo al instante mientras se teclea el importe;
 // el cambio que se guarda y se imprime es el que calcula el servidor.
@@ -34,13 +34,17 @@ function fecha(f) { // 'AAAA-MM-DD' → '30 de noviembre de 2026' (en UTC para n
   const [a, m, d] = f.split('-').map(Number);
   return new Date(Date.UTC(a, m - 1, d)).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
+function fechaCorta(f, hoy) { // igual que fecha() pero sin el año si es el año en curso: '23 de octubre'
+  if (!f) return '—';
+  return hoy && f.slice(0, 4) === hoy.slice(0, 4) ? fecha(f).replace(/ de \d{4}$/, '') : fecha(f);
+}
 const NOMBRE_METODO = { EFECTIVO: 'Efectivo', TARJETA: 'Tarjeta', TRANSFERENCIA: 'Transferencia' };
 
 // ------------------------------------------------------------------ estado de la operación
 const estado = {
   planes: [], metodos: [],
   cliente: null,        // respuesta de GET /ventas/clientes/:codigo
-  idTipo: null, idPromocion: null,
+  idTipo: null,
   cotizacion: null,     // respuesta de POST /ventas/cotizar
   metodo: 'EFECTIVO',
   clave: crypto.randomUUID(), // una por operación: si se reintenta, el servidor no duplica la venta
@@ -71,24 +75,28 @@ function mostrarError(json) {
 }
 
 // ------------------------------------------------------------------ cliente
+// Los campos Nombre, Celular y Código sirven para buscar (reutiliza GET /clientes?q= del CU-02).
+// Al elegir un cliente se llenan con sus datos; si recepción vuelve a escribir en alguno, se deselecciona.
+const CAMPOS_CLIENTE = ['#c-nombre', '#c-telefono', '#c-codigo'];
 let temporizadorBusqueda;
 let resultados = [];
+let ultimaBusqueda = '';
 
-async function buscarClientes() {
-  const q = $('#q-cliente').value.trim();
+async function buscarClientes(campo) {
+  const q = campo.value.trim();
   const lista = $('#resultados-cliente');
   aviso($('#aviso-cliente'), 'info', '');
+  ultimaBusqueda = q;
   if (q.length < 2) { lista.hidden = true; return; }
-  // Reutiliza la búsqueda del CU-02 (GET /clientes?q=)
   const r = await api('GET', '/clientes?q=' + encodeURIComponent(q));
-  if (q !== $('#q-cliente').value.trim()) return; // llegó tarde: el usuario ya escribió otra cosa
+  if (q !== ultimaBusqueda) return; // llegó tarde: el usuario ya escribió otra cosa
   if (!r.ok) { lista.hidden = true; aviso($('#aviso-cliente'), 'error', r.json.mensaje || 'No se pudo buscar'); return; }
   resultados = (Array.isArray(r.json) ? r.json : []).slice(0, 15);
   if (!resultados.length) { lista.hidden = true; aviso($('#aviso-cliente'), 'error', 'No existe ningún cliente que coincida con "' + q + '".'); return; }
   // Cada fila muestra código y celular: así no se confunden dos clientes con el mismo nombre
   lista.innerHTML = resultados.map((c, i) => {
     const nombre = `${c.nombres || ''} ${c.apellidoPaterno || ''} ${c.apellidoMaterno || ''}`.trim();
-    return `<li><button type="button" data-i="${i}"><span>${esc(nombre)} · ${esc(c.telefono)}${c.estatus === 'INACTIVO' ? ' <span class="insignia insignia-alerta">INACTIVO</span>' : ''}</span><span class="codigo">${esc(c.codigo)}</span></button></li>`;
+    return `<li><button type="button" data-i="${i}"><span>${esc(nombre)} · ${esc(c.telefono)}${c.estatus === 'INACTIVO' ? ' (INACTIVO)' : ''}</span><span class="codigo">${esc(c.codigo)}</span></button></li>`;
   }).join('');
   lista.hidden = false;
   lista.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => seleccionarCliente(resultados[Number(b.dataset.i)].codigo)));
@@ -107,44 +115,41 @@ async function seleccionarCliente(codigo) {
   cotizar();
 }
 
-function pintarCliente() {
+function deseleccionarCliente() {
+  if (!estado.cliente) return;
+  estado.cliente = null;
+  pintarCliente(false);
+  cotizar();
+}
+
+/** @param llenarCampos false cuando recepción está escribiendo (no se le borra lo que teclea). */
+function pintarCliente(llenarCampos = true) {
   const c = estado.cliente;
-  const buscador = $('#buscador-cliente');
-  const ficha = $('#cliente-seleccionado');
   const insignia = $('#estado-acceso');
+  const foto = $('#foto-cliente');
+  const extra = $('#cliente-extra');
   if (!c) {
-    buscador.hidden = false; ficha.hidden = true; ficha.innerHTML = '';
+    if (llenarCampos) CAMPOS_CLIENTE.forEach((s) => ($(s).value = ''));
+    foto.innerHTML = '';
+    extra.innerHTML = '';
     insignia.className = 'insignia insignia-neutra'; insignia.textContent = 'Selecciona un cliente';
     return;
   }
+  $('#c-nombre').value = c.nombre;
+  $('#c-telefono').value = c.telefono;
+  $('#c-codigo').value = c.codigo;
   const iniciales = c.nombre.split(/\s+/).slice(0, 2).map((p) => p[0] || '').join('').toUpperCase();
   const fotoSegura = c.foto && /^(\/|https?:\/\/)/.test(c.foto);
+  foto.innerHTML = fotoSegura ? `<img src="${esc(c.foto)}" alt="Fotografía de ${esc(c.nombre)}">` : esc(iniciales);
   const membresia = c.membresiaVigente
-    ? `Membresía vigente: <strong>${esc(c.membresiaVigente.plan)}</strong> hasta ${esc(fecha(c.membresiaVigente.fechaFin))}`
+    ? `Membresía actual: <strong>${esc(c.membresiaVigente.plan)}</strong> hasta ${esc(fecha(c.membresiaVigente.fechaFin))}`
     : c.ultimoFin ? `Membresía vencida el ${esc(fecha(c.ultimoFin))}` : 'Sin membresías anteriores';
-  ficha.innerHTML = `
-    <div class="ficha-cliente">
-      ${fotoSegura ? `<img class="foto" src="${esc(c.foto)}" alt="Fotografía de ${esc(c.nombre)}">` : `<div class="foto" aria-hidden="true">${esc(iniciales)}</div>`}
-      <div class="ficha-datos">
-        <div class="nombre">${esc(c.nombre)}</div>
-        <div class="linea">Cel. ${esc(c.telefono)} · Código ${esc(c.codigo)}</div>
-        <div class="linea">${membresia}</div>
-      </div>
-      <div class="ficha-acciones"><button type="button" class="boton-secundario" id="btn-cambiar-cliente">Cambiar cliente</button></div>
-    </div>
+  extra.innerHTML = `
+    <p class="nota">${membresia}</p>
     ${c.conducta === 'EN_OBSERVACION' ? '<p class="aviso aviso-info">Cliente en observación. Revisa sus observaciones de acceso antes de cobrar.</p>' : ''}
     ${c.motivoBloqueo ? `<p class="aviso aviso-error">${esc(c.motivoBloqueo)}</p>` : ''}`;
-  buscador.hidden = true;
-  ficha.hidden = false;
   insignia.className = 'insignia ' + (c.acceso.permitido ? 'insignia-ok' : 'insignia-alerta');
   insignia.textContent = c.acceso.motivo;
-  $('#btn-cambiar-cliente').addEventListener('click', () => {
-    estado.cliente = null;
-    pintarCliente();
-    $('#q-cliente').value = '';
-    $('#q-cliente').focus();
-    cotizar();
-  });
 }
 
 // ------------------------------------------------------------------ planes
@@ -152,39 +157,50 @@ function pintarPlanes() {
   const cont = $('#planes');
   if (!estado.planes.length) {
     cont.innerHTML = '<p class="aviso aviso-error">No hay planes de membresía configurados. Pide al administrador que los registre para poder vender.</p>';
+    actualizarFlecha();
     return;
   }
-  cont.innerHTML = estado.planes.map((p) => `
-    <div class="plan ${p.idTipo === estado.idTipo ? 'seleccionado' : ''}">
+  cont.innerHTML = estado.planes.map((p) => {
+    const sel = p.idTipo === estado.idTipo;
+    return `
+    <div class="plan ${sel ? 'seleccionado' : ''}">
       <span class="plan-nombre">${esc(p.nombre)}</span>
-      <span class="plan-duracion">${esc(p.duracionDias)} ${p.duracionDias === 1 ? 'día' : 'días'}</span>
-      <span class="plan-precio">${esc(dinero(p.precio))}</span>
-      <span class="plan-detalle">${esc(p.detalles || '')}</span>
-      <button type="button" data-tipo="${esc(p.idTipo)}" aria-pressed="${p.idTipo === estado.idTipo}">${p.idTipo === estado.idTipo ? 'Seleccionado' : 'Seleccionar'}</button>
-    </div>`).join('');
+      <div class="plan-cuerpo">
+        <span class="plan-duracion">${esc(p.duracionDias)} ${p.duracionDias === 1 ? 'día' : 'días'}</span>
+        <span class="plan-precio">${esc(dinero(p.precio))}</span>
+        <span class="plan-detalle">${esc(p.detalles || '')}</span>
+        <button type="button" data-tipo="${esc(p.idTipo)}" aria-pressed="${sel}">${sel ? 'Seleccionado' : 'Seleccionar'}</button>
+      </div>
+    </div>`;
+  }).join('');
   cont.querySelectorAll('button[data-tipo]').forEach((b) => b.addEventListener('click', () => {
     estado.idTipo = Number(b.dataset.tipo);
+    const desplazamiento = cont.scrollLeft; // conserva la posición del carrusel al repintar
     pintarPlanes();
+    cont.scrollLeft = desplazamiento;
     cotizar();
   }));
+  actualizarFlecha();
+}
+
+// La flecha solo aparece si hay más planes de los que caben; al llegar al final regresa al inicio.
+function actualizarFlecha() {
+  const cont = $('#planes');
+  $('#btn-mas-planes').hidden = cont.scrollWidth <= cont.clientWidth + 1;
+}
+function moverCarrusel() {
+  const cont = $('#planes');
+  const alFinal = cont.scrollLeft + cont.clientWidth >= cont.scrollWidth - 1;
+  const tarjeta = cont.querySelector('.plan');
+  cont.scrollLeft = alFinal ? 0 : cont.scrollLeft + (tarjeta ? tarjeta.offsetWidth + 14 : cont.clientWidth);
 }
 
 // ------------------------------------------------------------------ cotización (servidor)
-const ERRORES_PROMO = /^(PROMOCION_|REQUISITO_|CLIENTE_REQUERIDO)/;
-
 async function cotizar() {
   const turno = ++estado.turnoCotizacion;
   if (!estado.idTipo) { estado.cotizacion = null; pintarCotizacion(); return; }
-  const r = await api('POST', '/ventas/cotizar', {
-    codigoCliente: estado.cliente?.codigo, idTipo: estado.idTipo, idPromocion: estado.idPromocion || undefined,
-  });
+  const r = await api('POST', '/ventas/cotizar', { codigoCliente: estado.cliente?.codigo, idTipo: estado.idTipo });
   if (turno !== estado.turnoCotizacion) return; // respuesta vieja
-  if (!r.ok && estado.idPromocion && ERRORES_PROMO.test(r.json.codigo || '')) {
-    // La promoción ya no aplica (cambió el plan o el cliente): se quita y se avisa
-    estado.idPromocion = null;
-    aviso($('#mensaje-cobro'), 'info', 'Se quitó la promoción: ' + (r.json.mensaje || 'ya no aplica'));
-    return cotizar();
-  }
   if (!r.ok) {
     estado.cotizacion = null;
     if (r.json.codigo === 'PLAN_NO_DISPONIBLE') { estado.idTipo = null; await cargarCatalogo(); }
@@ -198,78 +214,71 @@ async function cotizar() {
 
 function pintarCotizacion() {
   const q = estado.cotizacion;
-  // Promociones
-  const cont = $('#promociones');
-  if (!q) cont.innerHTML = '<p class="nota">Selecciona un plan para ver las promociones.</p>';
-  else if (!q.promociones.length) cont.innerHTML = '<p class="nota">No hay promociones registradas.</p>';
-  else {
-    cont.innerHTML = q.promociones.map((p) => {
-      const sel = p.idPromocion === estado.idPromocion;
-      const periodo = p.fechaInicio || p.fechaFin ? `Vigencia: ${p.fechaInicio ? fecha(p.fechaInicio) : '—'} al ${p.fechaFin ? fecha(p.fechaFin) : 'sin fecha límite'}` : '';
-      return `<button type="button" class="promo ${sel ? 'seleccionada' : ''}" data-promo="${esc(p.idPromocion)}" ${p.aplicable ? '' : 'disabled'} aria-pressed="${sel}">
-        <span class="promo-nombre">${esc(p.nombre)}${sel ? ' · Aplicada (clic para quitar)' : ''}</span>
-        <span class="promo-desc">${esc(p.descripcion || '')}</span>
-        ${p.requisito ? `<span class="promo-req">Requisito: ${esc(p.requisito)}</span>` : ''}
-        ${periodo ? `<span class="promo-req">${esc(periodo)}</span>` : ''}
-        ${p.aplicable ? '' : `<span class="promo-motivo">${esc(p.motivo)}</span>`}
-      </button>`;
-    }).join('');
-    cont.querySelectorAll('button[data-promo]').forEach((b) => b.addEventListener('click', () => {
-      const id = Number(b.dataset.promo);
-      estado.idPromocion = estado.idPromocion === id ? null : id; // un clic aplica, otro quita (una sola por venta)
-      $('#verificacion-texto').value = '';
-      $('#verificacion-ok').checked = false;
-      cotizar();
-    }));
-  }
-  // Verificación de documento
-  const promo = q?.promocion;
-  $('#verificacion').hidden = !promo?.requiereVerificacion;
-  if (promo?.requiereVerificacion) $('#verificacion-etiqueta').textContent = 'Documento verificado · ' + (promo.requisito || '');
 
   // Resumen
   const res = $('#resumen');
   if (!q) res.innerHTML = '<p class="nota">Selecciona un plan.</p>';
   else res.innerHTML = `
-    <div class="fila-importe"><span>${esc(q.plan.nombre)}</span><span>${esc(dinero(q.precioOriginal))}</span></div>
-    ${q.descuento > 0 ? `<div class="fila-importe descuento"><span>${esc(q.descripcionDescuento)}</span><span>-${esc(dinero(q.descuento))}</span></div>` : ''}
-    <div class="fila-importe total"><span>Total</span><strong>${esc(dinero(q.total))}</strong></div>`;
+    <div class="tabla">
+      <div class="fila-importe"><span>${esc(q.plan.nombre)}</span><span>${esc(dinero(q.precioOriginal))}</span></div>
+      <div class="fila-importe total"><span>Total</span><span>${esc(dinero(q.total))}</span></div>
+    </div>`;
 
   // Vigencia
   const v = q?.vigencia;
-  $('#nueva-vigencia').textContent = v ? fecha(v.fin) : '—';
+  const hoy = estado.cliente?.hoy;
+  $('#nueva-vigencia').textContent = v ? fechaCorta(v.fin, hoy) : '—';
+  const anterior = estado.cliente?.membresiaVigente;
   const detalle = !q ? 'El acceso se libera en el torniquete al confirmar el cobro.'
     : !v ? 'Selecciona un cliente para calcular la vigencia.'
-    : (v.tipo === 'RENOVACION' ? `Se suma a su membresía vigente: del ${fecha(v.inicio)} al ${fecha(v.fin)}. `
-      : v.tipo === 'REACTIVACION' ? `Su membresía anterior venció; inicia hoy (${fecha(v.inicio)}). `
-      : `Del ${fecha(v.inicio)} al ${fecha(v.fin)}. `) + 'El acceso se libera en el torniquete al confirmar el cobro.';
+    : q.bloqueo ? 'Este plan no se puede vender al cliente mientras tenga su membresía actual.'
+    : (v.tipo === 'REEMPLAZO' && anterior
+        ? `Reemplaza su membresía ${anterior.plan} (vencía el ${fecha(anterior.fechaFin)}); los días restantes no se suman. `
+        : v.tipo === 'REACTIVACION' ? 'Su membresía anterior venció. '
+        : '') + `Del ${fecha(v.inicio)} al ${fecha(v.fin)}. El acceso se libera en el torniquete al confirmar el cobro.`;
   $('#vigencia-detalle').textContent = detalle;
+
+  // Reemplazo de una membresía vigente: el servidor decide (bloqueo / advertencia); aquí solo se muestra con fechas legibles
+  const caja = $('#caja-vigencia');
+  caja.classList.toggle('bloqueada', !!q?.bloqueo);
+  caja.classList.toggle('advertencia', !q?.bloqueo && !!q?.advertencia);
+  const finActual = anterior ? fecha(anterior.fechaFin) : '';
+  if (q?.bloqueo) aviso($('#aviso-reemplazo'), 'error', anterior
+    ? `✘ No se puede vender: el plan ${q.plan.nombre} vencería el ${fecha(v.fin)}, antes que su membresía ${anterior.plan} (vence el ${finActual}). Elige un plan que cubra al menos hasta esa fecha.`
+    : '✘ ' + q.bloqueo.mensaje);
+  else if (q?.advertencia) aviso($('#aviso-reemplazo'), 'info', anterior
+    ? `⚠ El cliente tiene ${anterior.plan} vigente hasta el ${finActual}. Al cobrar se sobrescribirá su fecha de vencimiento por el ${fecha(v.fin)}.`
+    : '⚠ ' + q.advertencia);
+  else aviso($('#aviso-reemplazo'), 'info', '');
 
   actualizarCambio();
 }
 
 // ------------------------------------------------------------------ forma de pago
 function pintarMetodos() {
-  const cont = $('#metodos');
-  cont.innerHTML = estado.metodos.map((m) => `<button type="button" class="metodo" role="radio" data-metodo="${esc(m)}" aria-checked="${m === estado.metodo}">${esc(NOMBRE_METODO[m] || m)}</button>`).join('');
-  cont.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => { estado.metodo = b.dataset.metodo; pintarMetodos(); }));
+  const sel = $('#metodo');
+  sel.innerHTML = estado.metodos.map((m) => `<option value="${esc(m)}" ${m === estado.metodo ? 'selected' : ''}>${esc(NOMBRE_METODO[m] || m)}</option>`).join('');
   const efectivo = estado.metodo === 'EFECTIVO';
   $('#campo-recibe').hidden = !efectivo;
   $('#campo-referencia').hidden = efectivo;
   $('#referencia-etiqueta').textContent = estado.metodo === 'TARJETA' ? 'No. de autorización del voucher' : 'Clave de rastreo de la transferencia';
 }
 
+// Muestra "· cambio $50.00" dentro del campo Recibe mientras se teclea
 function actualizarCambio() {
   const el = $('#cambio');
   const err = document.querySelector('[data-error="importeRecibido"]');
   const texto = $('#recibe').value.trim();
   err.textContent = '';
-  if (!estado.cotizacion || texto === '') { el.textContent = dinero(0); return; }
+  el.className = 'sufijo';
+  el.textContent = '';
+  if (!estado.cotizacion || texto === '') return;
   const recibido = Number(texto);
-  if (!Number.isFinite(recibido) || recibido < 0) { el.textContent = dinero(0); err.textContent = 'Captura un importe válido (no negativo)'; return; }
+  if (!Number.isFinite(recibido) || recibido < 0) { err.textContent = 'Captura un importe válido (no negativo)'; return; }
   const cambio = centavos(recibido) - centavos(estado.cotizacion.total);
-  if (cambio < 0) { el.textContent = dinero(0); err.textContent = `Importe insuficiente: faltan ${dinero(-cambio / 100)}`; return; }
-  el.textContent = dinero(cambio / 100);
+  if (cambio < 0) { err.textContent = `Importe insuficiente: faltan ${dinero(-cambio / 100)}`; return; }
+  el.textContent = '· cambio ' + dinero(cambio / 100);
+  el.classList.add('ok');
 }
 
 // ------------------------------------------------------------------ cobrar
@@ -280,10 +289,7 @@ function validarAntesDeCobrar() {
   if (!estado.cliente.puedeComprar) return estado.cliente.motivoBloqueo;
   if (!estado.idTipo) return 'Selecciona un plan';
   if (!q) return 'No se pudo calcular el total; vuelve a seleccionar el plan';
-  if (q.promocion?.requiereVerificacion) {
-    if (!$('#verificacion-texto').value.trim()) return 'Indica el documento que verificaste para la promoción ' + q.promocion.nombre;
-    if (!$('#verificacion-ok').checked) return 'Confirma que revisaste el documento del cliente';
-  }
+  if (q.bloqueo) return 'El plan elegido vence antes que la membresía actual del cliente; elige otro plan';
   if (!estado.metodos.includes(estado.metodo)) return 'Selecciona una forma de pago válida';
   if (estado.metodo === 'EFECTIVO') {
     const t = $('#recibe').value.trim();
@@ -315,8 +321,6 @@ async function cobrar() {
     claveIdempotencia: estado.clave,
     codigoCliente: estado.cliente.codigo,
     idTipo: estado.idTipo,
-    idPromocion: estado.idPromocion || undefined,
-    verificacionRequisito: q.promocion?.requiereVerificacion ? $('#verificacion-texto').value.trim() : undefined,
     metodoPago: estado.metodo,
     importeRecibido: efectivo ? Number($('#recibe').value) : undefined,
     referenciaPago: efectivo ? undefined : $('#referencia').value.trim(),
@@ -334,6 +338,7 @@ async function cobrar() {
   if (r.estado === 0) { aviso($('#mensaje-cobro'), 'error', '✘ No se pudo contactar al servidor. Puedes reintentar: la venta no se duplicará.'); return; }
   mostrarError(r.json);
   if (r.json.codigo === 'PRECIO_CAMBIO') { await cargarCatalogo(); cotizar(); }
+  if (r.json.codigo === 'PLAN_VENCE_ANTES') { await seleccionarClienteDeNuevo(); cotizar(); } // otra venta cambió su membresía
   if (r.json.codigo === 'NO_ENCONTRADO' || /^CLIENTE_/.test(r.json.codigo || '')) seleccionarClienteDeNuevo();
 }
 
@@ -377,9 +382,6 @@ function mostrarRecibo(rc, imprimir) {
         ${fila('Inicio de vigencia', fecha(rc.fechaInicio))}
         ${fila('Vencimiento', fecha(rc.fechaFin))}
         <hr>
-        ${fila('Precio', dinero(rc.precioOriginal))}
-        ${rc.descuento > 0 ? fila(rc.descripcionDescuento || 'Descuento', '-' + dinero(rc.descuento)) : ''}
-        ${rc.verificacionRequisito ? fila('Documento verificado', rc.verificacionRequisito) : ''}
         ${fila('TOTAL PAGADO', dinero(rc.total), 'r-total')}
         ${fila('Método de pago', NOMBRE_METODO[rc.metodoPago] || rc.metodoPago)}
         ${rc.importeRecibido !== null ? fila('Recibido', dinero(rc.importeRecibido)) : ''}
@@ -409,16 +411,15 @@ function mostrarRecibo(rc, imprimir) {
 // ------------------------------------------------------------------ cancelar / reiniciar
 // Limpia TODO lo temporal de la operación (no se guardó nada) y genera una clave nueva.
 function reiniciar() {
-  estado.cliente = null; estado.idTipo = null; estado.idPromocion = null; estado.cotizacion = null;
+  estado.cliente = null; estado.idTipo = null; estado.cotizacion = null;
   estado.metodo = 'EFECTIVO';
   estado.clave = crypto.randomUUID();
-  $('#q-cliente').value = ''; $('#recibe').value = ''; $('#referencia').value = '';
-  $('#verificacion-texto').value = ''; $('#verificacion-ok').checked = false;
+  $('#referencia').value = '';
   $('#resultados-cliente').hidden = true;
   aviso($('#aviso-cliente'), 'info', '');
   limpiarErroresCampo();
   pintarCliente(); pintarPlanes(); pintarMetodos(); pintarCotizacion();
-  $('#q-cliente').focus();
+  $('#c-nombre').focus();
 }
 
 function cancelar() {
@@ -441,6 +442,8 @@ async function cargarCatalogo() {
   estado.planes = r.json.planes;
   estado.metodos = r.json.metodosPago;
   if (!estado.metodos.includes(estado.metodo)) estado.metodo = estado.metodos[0];
+  $('#usuario-nombre').textContent = r.json.atiende?.nombre || '—';
+  $('#usuario-rol').textContent = r.json.atiende?.rol || '';
   pintarPlanes();
   pintarMetodos();
   bloquearCobro(false);
@@ -448,14 +451,22 @@ async function cargarCatalogo() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
-  $('#q-cliente').addEventListener('input', () => { clearTimeout(temporizadorBusqueda); temporizadorBusqueda = setTimeout(buscarClientes, 250); });
-  $('#q-cliente').addEventListener('keydown', (e) => {
+  CAMPOS_CLIENTE.forEach((s) => $(s).addEventListener('input', (e) => {
+    deseleccionarCliente();
+    clearTimeout(temporizadorBusqueda);
+    temporizadorBusqueda = setTimeout(() => buscarClientes(e.target), 250);
+  }));
+  CAMPOS_CLIENTE.forEach((s) => $(s).addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && resultados.length === 1 && !$('#resultados-cliente').hidden) seleccionarCliente(resultados[0].codigo);
-  });
+    if (e.key === 'Escape') $('#resultados-cliente').hidden = true;
+  }));
   // Huella: el lector biométrico todavía no está integrado (el comparador del CU-02 es simulado).
   // No se simula una lectura exitosa: solo se informa.
   $('#btn-huella').addEventListener('click', () => aviso($('#aviso-cliente'), 'info',
     'La búsqueda por huella requiere integrar el lector biométrico (SDK), que aún no está conectado. Busca al cliente por nombre, código o celular.'));
+  $('#btn-mas-planes').addEventListener('click', moverCarrusel);
+  window.addEventListener('resize', actualizarFlecha);
+  $('#metodo').addEventListener('change', (e) => { estado.metodo = e.target.value; pintarMetodos(); });
   $('#recibe').addEventListener('input', actualizarCambio);
   $('#btn-cobrar').addEventListener('click', cobrar);
   $('#btn-cancelar').addEventListener('click', cancelar);

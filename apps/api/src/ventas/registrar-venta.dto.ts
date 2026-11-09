@@ -1,5 +1,5 @@
 // DTOs del CU-04 Registrar venta de membresía (los valida ValidationPipe de main.ts).
-// Ojo: el navegador NUNCA manda precios ni descuentos para cobrar; solo QUÉ plan y QUÉ promoción.
+// Ojo: el navegador NUNCA manda precios para cobrar; solo QUÉ cliente y QUÉ plan.
 // El importe lo calcula ventas.service.ts. "totalEsperado" solo sirve para detectar que el
 // precio cambió entre que se mostró en pantalla y se confirmó el cobro.
 import { Transform } from 'class-transformer';
@@ -15,7 +15,6 @@ const recortar = ({ value }: { value: unknown }) => (typeof value === 'string' ?
 export class CotizarVentaDto {
   @IsOptional() @Transform(recortar) @IsString() @MaxLength(12) codigoCliente?: string;
   @IsInt({ message: 'Selecciona un plan' }) @Min(1, { message: 'Selecciona un plan' }) idTipo: number;
-  @IsOptional() @IsInt() @Min(1) idPromocion?: number;
 }
 
 // POST /ventas → registra la venta (cobro + membresía).
@@ -24,9 +23,6 @@ export class RegistrarVentaDto {
   @IsUUID('all', { message: 'Clave de operación inválida' }) claveIdempotencia: string;
   @Transform(recortar) @IsString() @IsNotEmpty({ message: 'Selecciona un cliente' }) @MaxLength(12) codigoCliente: string;
   @IsInt({ message: 'Selecciona un plan' }) @Min(1, { message: 'Selecciona un plan' }) idTipo: number;
-  @IsOptional() @IsInt() @Min(1) idPromocion?: number;
-  /** Qué documento revisó recepción (obligatorio si la promoción lo exige). */
-  @IsOptional() @Transform(recortar) @IsString() @MaxLength(250) verificacionRequisito?: string;
   @IsIn(METODOS_PAGO, { message: 'Método de pago no válido' }) metodoPago: MetodoPago;
   /** Efectivo entregado por el cliente (solo EFECTIVO). */
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El importe recibido debe ser un número con máximo 2 decimales' })

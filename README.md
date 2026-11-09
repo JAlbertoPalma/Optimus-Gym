@@ -2,7 +2,7 @@
 
 Sistema de gestión de gimnasio con acceso biométrico. Proyecto Integrador ITSON · RUP · Elaboración E1.
 
-**Avance actual:** CU-02 Administrar Clientes completo en la API (alta, búsqueda, ficha, edición, enrolamiento/reenrolamiento de huella, baja lógica y reactivación) + CU-04 Registrar venta de membresía (planes, promociones, cobro, vigencia y recibo) + migraciones 0001 a 0003 + interfaz web demo.
+**Avance actual:** CU-02 Administrar Clientes completo en la API (alta, búsqueda, ficha, edición, enrolamiento/reenrolamiento de huella, baja lógica y reactivación) + CU-04 Registrar venta de membresía (planes, cobro, vigencia y recibo) + migraciones 0001 a 0004 + interfaz web demo.
 
 ## Requisitos
 - Git, Node.js LTS (20 o 22), PostgreSQL 14+ (y DBeaver para ver las tablas)
@@ -25,7 +25,7 @@ npm run api:dev                   # API en http://localhost:3000
 ```bash
 npm install          # por si cambiaron dependencias
 npm run db:migrar    # aplica solo las migraciones nuevas, sin borrar datos
-npm run db:semilla   # agrega datos iniciales nuevos (ej. plan Trimestral y promociones del CU-04); no duplica ni cambia precios
+npm run db:semilla   # agrega datos iniciales nuevos (ej. plan Trimestral); no duplica ni cambia precios
 ```
 
 ## Pruebas
@@ -33,7 +33,7 @@ Con la API encendida, en otra terminal. Las dos suites se pueden repetir sin rei
 ```bash
 npm run api:probar           # alta y búsqueda   → 14 correctas
 npm run api:probar:gestion   # ficha, edición, huella, baja/reactivar → 26 correctas
-npm run api:probar:venta     # CU-04 venta, promociones, pagos, duplicados, renovación
+npm run api:probar:venta     # CU-04 venta, pagos, duplicados, reemplazo de membresía
 npm run api:probar:calculos  # CU-04 cálculos (no requiere la API encendida) → 29 correctas
 ```
 
@@ -52,16 +52,17 @@ npm run api:probar:calculos  # CU-04 cálculos (no requiere la API encendida) �
 |---|---|---|---|
 | GET | `/ventas/catalogo` | Planes activos y métodos de pago | — |
 | GET | `/ventas/clientes/:codigo` | Cliente, membresía vigente y estado de acceso | — |
-| POST | `/ventas/cotizar` | Calcula precio, promociones, total y vigencia (no guarda) | — |
+| POST | `/ventas/cotizar` | Calcula precio, total y vigencia (no guarda) | — |
 | POST | `/ventas` | Registra la venta (idempotente por `claveIdempotencia`) | FB |
 | GET | `/ventas/:folio` | Recibo de una venta (reimpresión) | — |
 
 Interfaz de venta: http://localhost:3000/venta.html (o `venta.html?cliente=OG-00001`).
 
 ### Reglas del CU-04
-- **Precios y promociones** se leen de `tipo_membresia` y `promocion`/`promocion_tipo_membresia`; el servidor recalcula el total (el navegador no envía importes a cobrar).
-- **Una promoción por venta.** Si exige documento, recepción debe registrar qué verificó.
-- **Vigencia ("extender sin perder días"):** con membresía vigente, la nueva inicia el día siguiente a su vencimiento; sin membresía o vencida, inicia hoy. Fin = inicio + duración − 1.
+- **Precios** se leen de `tipo_membresia`; el servidor recalcula el total (el navegador no envía importes a cobrar).
+- **Sin promociones por ahora** (la migración 0004 elimina las tablas de promociones).
+- **Vigencia ("la nueva reemplaza a la anterior"):** los días NO se apilan. La membresía nueva siempre inicia hoy y la anterior deja de contar (queda en el historial). La membresía actual es la última vendida. Fin = inicio + duración − 1.
+- **Reemplazo de una membresía vigente:** si el plan nuevo vencería ANTES que la vigente, la venta se rechaza (`PLAN_VENCE_ANTES`); si vence igual o después, se permite y se advierte que se sobrescribirá la fecha de vencimiento.
 - **Transaccional y sin duplicados:** membresía + pago + bitácora en una transacción; candado por cliente y `clave_idempotencia` única.
 - **Acceso:** se deriva de las membresías pagadas vigentes. El torniquete aún no está integrado.
 - **Permisos:** solo empleados activos con rol Administrador o Recepcionista.
@@ -71,7 +72,8 @@ Interfaz de venta: http://localhost:3000/venta.html (o `venta.html?cliente=OG-00
 apps/api/
   db/migraciones/0001_modelo_fase1.sql          modelo de datos Fase 1 (11 tablas)
   db/migraciones/0002_cu02_gestion_clientes.sql dirección y versionado de huellas (activa/inactiva)
-  db/migraciones/0003_cu04_venta_membresia.sql  promociones, datos del cobro y folio de venta
+  db/migraciones/0003_cu04_venta_membresia.sql  datos del cobro y folio de venta
+  db/migraciones/0004_cu04_sin_promociones.sql  elimina las promociones
   db/{migrar,semilla,reiniciar}.ts
   src/main.ts        arranque de la API y validación de la configuración
   src/clientes/      CU-02: controlador, servicio y DTOs (registrar y gestionar)

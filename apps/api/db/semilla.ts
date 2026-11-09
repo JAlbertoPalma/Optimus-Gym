@@ -1,5 +1,5 @@
 // SEMILLA: `npm run db:semilla`. Inserta los datos mínimos para que el sistema funcione:
-// roles, tipos de membresía, promociones (CU-04) y el empleado "admin" (que usa comun/sesion-demo.service.ts).
+// roles, tipos de membresía y el empleado "admin" (que usa comun/sesion-demo.service.ts).
 // Se puede ejecutar varias veces sin duplicar nada gracias a ON CONFLICT DO NOTHING
 // y a la revisión de si "admin" ya existe.
 import { hash } from '@node-rs/argon2';
@@ -29,26 +29,6 @@ export async function sembrar(): Promise<void> {
       await db.query('UPDATE tipo_membresia SET detalles = $2 WHERE nombre = $1 AND detalles IS NULL', [n, detalles]);
     }
 
-    // CU-04 promociones de ejemplo: [nombre, descripción, tipo, valor, requisito, requiere verificación, edad mínima]
-    // Todas aplican solo al plan Mensual. "Regreso a clases" solo vale del 1 de agosto al 30 de septiembre del año en curso.
-    for (const [n, desc, tipo, valor, requisito, verificar, edad] of [
-      ['Estudiante', 'Descuento de $50 en mensualidad', 'MONTO', 50, 'Identificación escolar vigente', true, null],
-      ['Adulto mayor', 'Descuento de $50 en mensualidad', 'MONTO', 50, 'Identificación oficial que acredite 60 años o más', true, 60],
-      ['Regreso a clases', 'Descuento del 10% en mensualidad', 'PORCENTAJE', 10, null, false, null],
-    ]) {
-      await db.query(
-        `INSERT INTO promocion (nombre, descripcion, tipo_descuento, valor, requisito, requiere_verificacion, edad_minima)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (nombre) DO NOTHING`, [n, desc, tipo, valor, requisito, verificar, edad]);
-      await db.query(
-        `INSERT INTO promocion_tipo_membresia (id_promocion, id_tipo)
-         SELECT p.id_promocion, t.id_tipo FROM promocion p, tipo_membresia t
-          WHERE p.nombre = $1 AND t.nombre = 'Mensual' ON CONFLICT DO NOTHING`, [n]);
-    }
-    await db.query(
-      `UPDATE promocion SET fecha_inicio = make_date(extract(year FROM current_date)::int, 8, 1),
-                            fecha_fin    = make_date(extract(year FROM current_date)::int, 9, 30)
-        WHERE nombre = 'Regreso a clases' AND fecha_inicio IS NULL`);
-
     // Empleado administrador: primero su registro en persona, luego en empleado y su rol
     const ya = await db.query("SELECT 1 FROM empleado WHERE nombre_usuario = 'admin'");
     if (ya.rowCount === 0) {
@@ -62,7 +42,7 @@ export async function sembrar(): Promise<void> {
       await db.query("INSERT INTO empleado_rol SELECT $1, id_rol FROM rol WHERE nombre='Administrador'", [id]);
     }
     await db.query('COMMIT');
-    console.log('Semilla aplicada (roles, tipos de membresía, promociones, usuario admin).');
+    console.log('Semilla aplicada (roles, tipos de membresía, usuario admin).');
   } catch (e) {
     await db.query('ROLLBACK');
     throw e;

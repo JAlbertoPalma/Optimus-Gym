@@ -3,26 +3,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Optimus Gym · Venta de membresía</title>
+  <title>Optimus Gym · Cobrar membresía</title>
   <link rel="stylesheet" href="venta.css">
 </head>
 <body>
   <div class="contenedor">
-    <!-- Barra lateral común del sistema. Los módulos aún no implementados se muestran deshabilitados. -->
+    <!-- Barra lateral común: quién atiende y módulos. Los aún no implementados se muestran deshabilitados. -->
     <aside class="lateral">
-      <div class="marca">OPTIMUS<span>GYM</span></div>
+      <div class="usuario">
+        <div id="usuario-nombre" class="usuario-nombre">—</div>
+        <div id="usuario-rol" class="usuario-rol">&nbsp;</div>
+      </div>
       <nav>
-        <span class="nav-item deshabilitado" title="Próximamente">Panel <small>Próximamente</small></span>
+        <span class="nav-item deshabilitado" title="Próximamente">Panel</span>
         <a class="nav-item" href="/#/">Clientes</a>
         <a class="nav-item activo" href="venta.html" aria-current="page">Venta</a>
-        <span class="nav-item deshabilitado" title="Próximamente">Clases <small>Próximamente</small></span>
-        <span class="nav-item deshabilitado" title="Próximamente">Reportes <small>Próximamente</small></span>
+        <span class="nav-item deshabilitado" title="Próximamente">Clases</span>
+        <span class="nav-item deshabilitado" title="Próximamente">Reportes</span>
       </nav>
     </aside>
 
     <main class="principal">
       <header class="encabezado">
-        <h1>Registrar venta de membresía</h1>
+        <h1>Cobrar membresía</h1>
         <span id="estado-acceso" class="insignia insignia-neutra">Selecciona un cliente</span>
       </header>
 
@@ -31,70 +34,82 @@
       <div class="rejilla">
         <!-- ======================= Columna izquierda ======================= -->
         <div class="columna">
-          <section class="tarjeta" aria-labelledby="t-cliente">
+          <section aria-labelledby="t-cliente">
             <h2 id="t-cliente">Cliente</h2>
-            <div id="buscador-cliente">
-              <div class="fila-busqueda">
-                <input id="q-cliente" type="search" placeholder="Nombre, código o celular…" autocomplete="off" aria-label="Buscar cliente">
-                <button id="btn-huella" type="button" class="boton-secundario">Buscar por huella</button>
+            <div class="cliente">
+              <div class="cliente-campos">
+                <!-- Los tres campos sirven para BUSCAR; al elegir un cliente se llenan con sus datos -->
+                <label for="c-nombre">Nombre</label>
+                <div class="buscador">
+                  <input id="c-nombre" data-busca autocomplete="off" placeholder="Escribe el nombre…">
+                  <ul id="resultados-cliente" class="resultados" hidden></ul>
+                </div>
+                <div class="fila-dos">
+                  <div>
+                    <label for="c-telefono">Número de celular</label>
+                    <input id="c-telefono" data-busca inputmode="tel" autocomplete="off" placeholder="10 dígitos">
+                  </div>
+                  <div>
+                    <label for="c-codigo">Código único</label>
+                    <input id="c-codigo" data-busca autocomplete="off" placeholder="OG-00000">
+                  </div>
+                </div>
+                <div class="centro"><button id="btn-huella" type="button" class="boton-azul">Buscar por huella</button></div>
+                <p id="aviso-cliente" class="aviso" hidden></p>
+                <div id="cliente-extra"></div>
               </div>
-              <ul id="resultados-cliente" class="resultados" hidden></ul>
-              <p id="aviso-cliente" class="nota" hidden></p>
+              <div id="foto-cliente" class="foto" aria-hidden="true"></div>
             </div>
-            <div id="cliente-seleccionado" hidden></div>
           </section>
 
-          <section class="tarjeta" aria-labelledby="t-plan">
+          <section aria-labelledby="t-plan">
             <h2 id="t-plan">Plan</h2>
-            <div id="planes" class="planes"><p class="nota">Cargando planes…</p></div>
-          </section>
-
-          <section class="tarjeta" aria-labelledby="t-promo">
-            <h2 id="t-promo">Promoción aplicable</h2>
-            <div id="promociones" class="promociones"><p class="nota">Selecciona un plan para ver las promociones.</p></div>
-            <div id="verificacion" class="verificacion" hidden>
-              <label for="verificacion-texto" id="verificacion-etiqueta">Documento verificado</label>
-              <input id="verificacion-texto" maxlength="250" placeholder="Ej. Credencial escolar ITSON vigente, folio 12345">
-              <label class="casilla"><input id="verificacion-ok" type="checkbox"> Confirmo que revisé el documento del cliente</label>
-              <div class="error-campo" data-error="verificacionRequisito"></div>
+            <div class="carrusel">
+              <div id="planes" class="planes"><p class="nota">Cargando planes…</p></div>
+              <button id="btn-mas-planes" type="button" class="flecha" aria-label="Ver más planes" hidden>&#10140;</button>
             </div>
           </section>
         </div>
 
         <!-- ======================= Columna derecha ======================= -->
         <div class="columna">
-          <section class="tarjeta" aria-labelledby="t-resumen">
+          <section aria-labelledby="t-resumen">
             <h2 id="t-resumen">Resumen del cobro</h2>
-            <div id="resumen"><p class="nota">Selecciona un plan.</p></div>
+            <div id="resumen" class="resumen"><p class="nota">Selecciona un plan.</p></div>
           </section>
 
-          <section class="tarjeta" aria-labelledby="t-pago">
-            <h2 id="t-pago">Forma de pago</h2>
-            <div id="metodos" class="metodos" role="radiogroup" aria-label="Forma de pago"></div>
-            <div id="campo-recibe" class="campo-pago">
-              <label for="recibe">Recibe</label>
+          <div>
+            <label for="metodo">Forma de pago</label>
+            <select id="metodo"></select>
+          </div>
+
+          <div id="campo-recibe">
+            <label for="recibe">Recibe</label>
+            <div class="campo-con-sufijo">
               <input id="recibe" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00">
-              <div class="error-campo" data-error="importeRecibido"></div>
-              <div class="fila-importe"><span>Cambio</span><strong id="cambio">$0.00</strong></div>
+              <span id="cambio" class="sufijo"></span>
             </div>
-            <div id="campo-referencia" class="campo-pago" hidden>
-              <label for="referencia" id="referencia-etiqueta">Referencia</label>
-              <input id="referencia" maxlength="60">
-              <div class="error-campo" data-error="referenciaPago"></div>
-              <p class="nota">Registra un cobro realizado en la terminal o banco; el sistema no procesa pagos electrónicos.</p>
-            </div>
-          </section>
+            <div class="error-campo" data-error="importeRecibido"></div>
+          </div>
+          <div id="campo-referencia" hidden>
+            <label for="referencia" id="referencia-etiqueta">Referencia</label>
+            <input id="referencia" maxlength="60">
+            <div class="error-campo" data-error="referenciaPago"></div>
+            <p class="nota">Registra un cobro realizado en la terminal o banco; el sistema no procesa pagos electrónicos.</p>
+          </div>
 
-          <section class="tarjeta tarjeta-vigencia" aria-live="polite">
-            <div class="vigencia-titulo">Nueva vigencia: <strong id="nueva-vigencia">—</strong></div>
+          <div id="caja-vigencia" class="vigencia" aria-live="polite">
+            <div class="vigencia-titulo">Nueva vigencia: <span id="nueva-vigencia">—</span></div>
             <p id="vigencia-detalle" class="nota">El acceso se libera en el torniquete al confirmar el cobro.</p>
-          </section>
+          </div>
+          <!-- Plan que vence antes que la membresía vigente (bloquea) o que sobrescribe su vencimiento (advierte) -->
+          <div id="aviso-reemplazo" class="aviso" role="alert" hidden></div>
 
           <div id="mensaje-cobro" class="aviso" role="alert" hidden></div>
 
           <div class="acciones">
-            <button id="btn-cancelar" type="button" class="boton-secundario">Cancelar</button>
             <button id="btn-cobrar" type="button" class="boton-cobrar" disabled>Cobrar e imprimir recibo</button>
+            <button id="btn-cancelar" type="button" class="boton-secundario">Cancelar</button>
           </div>
         </div>
       </div>
