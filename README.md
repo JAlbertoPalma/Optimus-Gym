@@ -2,7 +2,7 @@
 
 Sistema de gestión de gimnasio con acceso biométrico. Proyecto Integrador ITSON · RUP · Elaboración E1.
 
-**Avance actual:** CU-02 Administrar Clientes completo en la API (alta, búsqueda, ficha, edición, enrolamiento/reenrolamiento de huella, baja lógica y reactivación) + CU-04 Registrar venta de membresía (planes, cobro, vigencia y recibo) + migraciones 0001 a 0004 + interfaz web demo.
+**Avance actual:** CU-02 Administrar Clientes completo en la API (alta, búsqueda, ficha, edición, enrolamiento/reenrolamiento de huella, baja lógica y reactivación) + CU-04 Registrar venta de membresía (planes, cobro, vigencia y recibo) + migraciones 0001 a 0005 + interfaz web demo.
 
 ## Requisitos
 - Git, Node.js LTS (20 o 22), PostgreSQL 14+ (y DBeaver para ver las tablas)
@@ -25,7 +25,7 @@ npm run api:dev                   # API en http://localhost:3000
 ```bash
 npm install          # por si cambiaron dependencias
 npm run db:migrar    # aplica solo las migraciones nuevas, sin borrar datos
-npm run db:semilla   # agrega datos iniciales nuevos (ej. plan Trimestral); no duplica ni cambia precios
+npm run db:semilla   # agrega datos iniciales nuevos (ej. planes Semanal, Estudiante y Precio especial); no duplica ni cambia precios
 ```
 
 ## Pruebas
@@ -60,9 +60,11 @@ Interfaz de venta: http://localhost:3000/venta.html (o `venta.html?cliente=OG-00
 
 ### Reglas del CU-04
 - **Precios** se leen de `tipo_membresia`; el servidor recalcula el total (el navegador no envía importes a cobrar).
+- **Planes por día del mes:** `tipo_membresia.dias_disponibles` (ej. Precio especial solo el 1 y el 15); fuera de esos días no aparece en el catálogo ni se puede cobrar.
+- **Tarjeta y transferencia** se cobran fuera del sistema; solo se registra el método de pago (sin referencia).
 - **Sin promociones por ahora** (la migración 0004 elimina las tablas de promociones).
 - **Vigencia ("la nueva reemplaza a la anterior"):** los días NO se apilan. La membresía nueva siempre inicia hoy y la anterior deja de contar (queda en el historial). La membresía actual es la última vendida. Fin = inicio + duración − 1.
-- **Reemplazo de una membresía vigente:** si el plan nuevo vencería ANTES que la vigente, la venta se rechaza (`PLAN_VENCE_ANTES`); si vence igual o después, se permite y se advierte que se sobrescribirá la fecha de vencimiento.
+- **Reemplazo de una membresía vigente:** solo si le faltan **menos de 7 días** para vencer (si no → `MEMBRESIA_VIGENTE`) y si el plan nuevo vence **después** que ella (el mismo día o antes → `PLAN_VENCE_ANTES`). Cuando se permite, se advierte que se sobrescribirá su fecha de vencimiento.
 - **Transaccional y sin duplicados:** membresía + pago + bitácora en una transacción; candado por cliente y `clave_idempotencia` única.
 - **Acceso:** se deriva de las membresías pagadas vigentes. El torniquete aún no está integrado.
 - **Permisos:** solo empleados activos con rol Administrador o Recepcionista.
@@ -74,6 +76,7 @@ apps/api/
   db/migraciones/0002_cu02_gestion_clientes.sql dirección y versionado de huellas (activa/inactiva)
   db/migraciones/0003_cu04_venta_membresia.sql  datos del cobro y folio de venta
   db/migraciones/0004_cu04_sin_promociones.sql  elimina las promociones
+  db/migraciones/0005_cu04_planes_y_pagos.sql   planes por día del mes, nuevos precios, quita la referencia de pago
   db/{migrar,semilla,reiniciar}.ts
   src/main.ts        arranque de la API y validación de la configuración
   src/clientes/      CU-02: controlador, servicio y DTOs (registrar y gestionar)

@@ -48,6 +48,17 @@ const sumarDias = (f: string, d: number) => { const [a, m, dd] = f.split('-').ma
   r = await llamar('GET', '/api/v1/ventas/clientes/' + c1);
   chequear('Estado de cliente nuevo → sin acceso hasta cobrar', r.estado === 200 && r.json.acceso?.permitido === false && r.json.acceso.motivo === 'Sin acceso hasta cobrar' && r.json.puedeComprar, JSON.stringify(r.json));
   const hoy: string = r.json.hoy;
+  // ---- Planes nuevos ----
+  const estudiante = planes.find((p) => p.nombre === 'Estudiante');
+  chequear('Plan Estudiante disponible a $550', estudiante?.precio === 550, JSON.stringify(estudiante));
+  const especial = planes.find((p) => p.nombre === 'Precio especial');
+  const diaHoy = Number(hoy.slice(8, 10));
+  // (la regla de los días se prueba completa en test/calculos-venta.ts con planDisponibleEn)
+  if (diaHoy === 1 || diaHoy === 15)
+    chequear(`Hoy es día ${diaHoy} → Precio especial visible a $550`, especial?.precio === 550, JSON.stringify(especial));
+  else
+    chequear(`Hoy es día ${diaHoy} → Precio especial NO aparece en el catálogo`, especial === undefined, JSON.stringify(especial));
+
   r = await llamar('GET', '/api/v1/ventas/clientes/OG-00000');
   chequear('Cliente inexistente → 404 NO_ENCONTRADO', r.estado === 404 && r.json.codigo === 'NO_ENCONTRADO', JSON.stringify(r.json));
 
@@ -75,8 +86,6 @@ const sumarDias = (f: string, d: number) => { const [a, m, dd] = f.split('-').ma
   chequear('Efectivo insuficiente → 422 IMPORTE_INSUFICIENTE', r.estado === 422 && r.json.codigo === 'IMPORTE_INSUFICIENTE', JSON.stringify(r.json));
   r = await llamar('POST', '/api/v1/ventas', venta({ totalEsperado: 1 }));
   chequear('Precio manipulado/cambiado → 409 PRECIO_CAMBIO con total real', r.estado === 409 && r.json.codigo === 'PRECIO_CAMBIO' && r.json.total === mensual.precio, JSON.stringify(r.json));
-  r = await llamar('POST', '/api/v1/ventas', venta({ metodoPago: 'TARJETA', importeRecibido: undefined }));
-  chequear('Tarjeta sin referencia → 422 REFERENCIA_REQUERIDA', r.estado === 422 && r.json.codigo === 'REFERENCIA_REQUERIDA', JSON.stringify(r.json));
   r = await llamar('GET', '/api/v1/ventas/clientes/' + c1);
   chequear('Tras los errores el cliente sigue sin membresía (nada a medias)', r.json.membresiaVigente === null && r.json.ultimoFin === null, JSON.stringify(r.json));
 
@@ -101,27 +110,34 @@ const sumarDias = (f: string, d: number) => { const [a, m, dd] = f.split('-').ma
   const fin1 = sumarDias(hoy, mensual.duracionDias - 1);
   chequear('Tras cobrar → acceso permitido y membresía vigente', r.json.acceso?.permitido === true && r.json.membresiaVigente?.fechaFin === fin1, JSON.stringify(r.json));
 
-  // ---- Plan que vence ANTES que la membresía vigente → no se permite ----
-  r = await llamar('POST', '/api/v1/ventas/cotizar', { codigoCliente: c1, idTipo: visita.idTipo });
-  chequear('Cotizar Visita con Mensual vigente → bloqueo PLAN_VENCE_ANTES (sin error HTTP)', r.estado === 200 && r.json.bloqueo?.codigo === 'PLAN_VENCE_ANTES', JSON.stringify(r.json));
-  r = await llamar('POST', '/api/v1/ventas', venta({ idTipo: visita.idTipo, totalEsperado: visita.precio, importeRecibido: visita.precio + 50 }));
-  chequear('Registrar Visita con Mensual vigente → 409 PLAN_VENCE_ANTES', r.estado === 409 && r.json.codigo === 'PLAN_VENCE_ANTES', JSON.stringify(r.json));
-  r = await llamar('GET', '/api/v1/ventas/clientes/' + c1);
-  chequear('Tras el rechazo la Mensual sigue intacta', r.json.membresiaVigente?.plan === 'Mensual' && r.json.membresiaVigente?.fechaFin === fin1, JSON.stringify(r.json.membresiaVigente));
-
-  // ---- Plan que abarca días de la vigente → se advierte y se sobrescribe (los días NO se apilan) ----
+  // ---- Membresía vigente con 7 días o más por delante → NO se puede reemplazar con ningún plan ----
   r = await llamar('POST', '/api/v1/ventas/cotizar', { codigoCliente: c1, idTipo: anual.idTipo });
-  chequear('Cotizar Anual con Mensual vigente → REEMPLAZO desde hoy con advertencia de sobrescritura',
-    r.json.vigencia?.tipo === 'REEMPLAZO' && r.json.vigencia.inicio === hoy && r.json.bloqueo === null && typeof r.json.advertencia === 'string' && r.json.advertencia.includes(fin1),
-    JSON.stringify(r.json));
-  r = await llamar('POST', '/api/v1/ventas', venta({ idTipo: anual.idTipo, metodoPago: 'TRANSFERENCIA', importeRecibido: undefined, referenciaPago: 'RASTREO123', totalEsperado: anual.precio }));
-  const finAnual = sumarDias(hoy, anual.duracionDias - 1);
-  chequear('Mensual → Anual por transferencia: la Anual empieza HOY (no al terminar la Mensual)', r.estado === 201 && r.json.recibo?.fechaInicio === hoy && r.json.recibo?.fechaFin === finAnual, JSON.stringify(r.json));
-  chequear('Transferencia guarda la referencia y no el efectivo', r.json.recibo?.importeRecibido === null && r.json.recibo?.referenciaPago === 'RASTREO123', JSON.stringify(r.json.recibo));
+  chequear('Cotizar Anual con Mensual recién comprada → bloqueo MEMBRESIA_VIGENTE (sin error HTTP)', r.estado === 200 && r.json.bloqueo?.codigo === 'MEMBRESIA_VIGENTE' && r.json.advertencia === null, JSON.stringify(r.json));
+  r = await llamar('POST', '/api/v1/ventas', venta({ idTipo: anual.idTipo, totalEsperado: anual.precio, importeRecibido: anual.precio }));
+  chequear('Registrar Anual con Mensual recién comprada → 409 MEMBRESIA_VIGENTE', r.estado === 409 && r.json.codigo === 'MEMBRESIA_VIGENTE', JSON.stringify(r.json));
+  r = await llamar('POST', '/api/v1/ventas', venta({ idTipo: visita.idTipo, totalEsperado: visita.precio, importeRecibido: visita.precio + 50 }));
+  chequear('Registrar Visita con Mensual recién comprada → 409 MEMBRESIA_VIGENTE', r.estado === 409 && r.json.codigo === 'MEMBRESIA_VIGENTE', JSON.stringify(r.json));
   r = await llamar('GET', '/api/v1/ventas/clientes/' + c1);
-  chequear('Tras vender Anual → la vigente es la Anual (se sobrescribió el vencimiento de la Mensual)', r.json.membresiaVigente?.plan === 'Anual' && r.json.membresiaVigente?.fechaFin === finAnual, JSON.stringify(r.json.membresiaVigente));
-  r = await llamar('POST', '/api/v1/ventas', venta({ idTipo: mensual.idTipo }));
-  chequear('Con Anual vigente ya no se puede vender Mensual → 409 PLAN_VENCE_ANTES', r.estado === 409 && r.json.codigo === 'PLAN_VENCE_ANTES', JSON.stringify(r.json));
+  chequear('Tras los rechazos la Mensual sigue intacta', r.json.membresiaVigente?.plan === 'Mensual' && r.json.membresiaVigente?.fechaFin === fin1, JSON.stringify(r.json.membresiaVigente));
+
+  // ---- Membresía con menos de 7 días por delante (Semanal) → se advierte y se sobrescribe (los días NO se apilan) ----
+  const semanal = planes.find((p) => p.nombre === 'Semanal');
+  chequear('Plan Semanal disponible a $200 por 7 días', semanal?.precio === 200 && semanal?.duracionDias === 7, JSON.stringify(semanal));
+  const c6 = await crearCliente();
+  r = await llamar('POST', '/api/v1/ventas', venta({ codigoCliente: c6, idTipo: semanal.idTipo, totalEsperado: semanal.precio }));
+  const finSemanal = sumarDias(hoy, 6);
+  chequear('Venta Semanal → vence en 6 días (7 días contando hoy)', r.estado === 201 && r.json.recibo?.fechaFin === finSemanal, JSON.stringify(r.json));
+  r = await llamar('POST', '/api/v1/ventas/cotizar', { codigoCliente: c6, idTipo: mensual.idTipo });
+  chequear('Cotizar Mensual con Semanal vigente (faltan 6 días) → REEMPLAZO desde hoy con advertencia de sobrescritura',
+    r.json.vigencia?.tipo === 'REEMPLAZO' && r.json.vigencia.inicio === hoy && r.json.bloqueo === null && typeof r.json.advertencia === 'string' && r.json.advertencia.includes(finSemanal),
+    JSON.stringify(r.json));
+  r = await llamar('POST', '/api/v1/ventas/cotizar', { codigoCliente: c6, idTipo: visita.idTipo });
+  chequear('Cotizar Visita con Semanal vigente → bloqueo PLAN_VENCE_ANTES', r.json.bloqueo?.codigo === 'PLAN_VENCE_ANTES', JSON.stringify(r.json));
+  r = await llamar('POST', '/api/v1/ventas', venta({ codigoCliente: c6, metodoPago: 'TRANSFERENCIA', importeRecibido: undefined }));
+  chequear('Semanal → Mensual por transferencia: la Mensual empieza HOY (no al terminar la Semanal)', r.estado === 201 && r.json.recibo?.fechaInicio === hoy && r.json.recibo?.fechaFin === fin1, JSON.stringify(r.json));
+  chequear('Transferencia sin referencia → no guarda efectivo, cambio ni referencia', r.json.recibo?.importeRecibido === null && r.json.recibo?.cambio === null && !('referenciaPago' in (r.json.recibo ?? {})), JSON.stringify(r.json.recibo));
+  r = await llamar('GET', '/api/v1/ventas/clientes/' + c6);
+  chequear('Tras vender Mensual → la vigente es la Mensual (se sobrescribió el vencimiento de la Semanal)', r.json.membresiaVigente?.plan === 'Mensual' && r.json.membresiaVigente?.fechaFin === fin1, JSON.stringify(r.json.membresiaVigente));
   r = await llamar('GET', '/api/v1/ventas/' + folio1);
   chequear('El recibo anterior se conserva intacto (historial)', r.estado === 200 && r.json.fechaFin === fin1 && r.json.total === mensual.precio, JSON.stringify(r.json));
   r = await llamar('GET', '/api/v1/ventas/V-999999');
@@ -134,14 +150,14 @@ const sumarDias = (f: string, d: number) => { const [a, m, dd] = f.split('-').ma
   chequear('Doble clic simultáneo → una venta nueva y una duplicada con el mismo folio',
     [a.estado, b.estado].sort().join() === '200,201' && a.json.folio === b.json.folio, JSON.stringify([a.estado, a.json, b.estado, b.json]));
 
-  // ---- Concurrencia: dos ventas distintas del mismo cliente → ambas inician hoy, sin apilarse ----
+  // ---- Concurrencia: dos ventas distintas del mismo cliente → la segunda ve la primera y se rechaza ----
   const c3 = await crearCliente();
   const [x, y] = await Promise.all([
     llamar('POST', '/api/v1/ventas', venta({ codigoCliente: c3, importeRecibido: mensual.precio + 100 })),
     llamar('POST', '/api/v1/ventas', venta({ codigoCliente: c3, importeRecibido: mensual.precio + 100 })),
   ]);
-  chequear('Dos cobros simultáneos del mismo cliente → ambos inician hoy (no se encadenan)',
-    x.estado === 201 && y.estado === 201 && x.json.recibo?.fechaInicio === hoy && y.json.recibo?.fechaInicio === hoy, JSON.stringify([x.json, y.json]));
+  chequear('Dos cobros simultáneos del mismo cliente → uno 201 y el otro 409 MEMBRESIA_VIGENTE (no se cobra dos veces)',
+    [x.estado, y.estado].sort().join() === '201,409' && [x.json.codigo, y.json.codigo].includes('MEMBRESIA_VIGENTE'), JSON.stringify([x.json, y.json]));
 
   // ---- Pago exacto (cliente sin membresía) ----
   r = await llamar('POST', '/api/v1/ventas', venta({ codigoCliente: await crearCliente(), idTipo: visita.idTipo, totalEsperado: visita.precio, importeRecibido: visita.precio }));

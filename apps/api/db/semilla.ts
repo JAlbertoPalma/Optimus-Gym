@@ -17,15 +17,21 @@ export async function sembrar(): Promise<void> {
       ['Entrenador', 'Consulta de clases y asistencia'],
     ]) await db.query('INSERT INTO rol (nombre, descripcion) VALUES ($1,$2) ON CONFLICT (nombre) DO NOTHING', [n, d]);
 
-    // Tipos de membresía: [nombre, duración en días, precio, descripción del acceso]
-    // Los precios solo se fijan al crear el plan; si ya existe, NO se tocan (los cambia el administrador).
-    for (const [n, dias, precio, detalles] of [
-      ['Visita', 1, 50, 'Acceso por un día al área de pesas y cardio'],
-      ['Mensual', 30, 450, 'Acceso ilimitado al gimnasio durante 30 días'],
-      ['Trimestral', 90, 1500, 'Acceso ilimitado al gimnasio durante 90 días'],
-      ['Anual', 365, 4500, 'Acceso ilimitado al gimnasio durante 365 días'],
+    // Tipos de membresía: [nombre, duración en días, precio, descripción del acceso, días del mes en que se vende (null = todos)]
+    // Los precios solo se fijan al crear el plan; si ya existe, NO se tocan (los cambia el administrador
+    // o una migración, como la 0005).
+    for (const [n, dias, precio, detalles, diasDisponibles] of [
+      ['Visita', 1, 50, 'Acceso por un día al área de pesas y cardio', null],
+      ['Semanal', 7, 200, 'Acceso ilimitado al gimnasio durante 7 días', null],
+      ['Mensual', 30, 600, 'Acceso ilimitado al gimnasio durante 30 días', null],
+      ['Estudiante', 30, 550, 'Acceso ilimitado durante 30 días. Presentar credencial escolar vigente', null],
+      ['Precio especial', 30, 550, 'Acceso ilimitado durante 30 días. Solo se vende el día 1 y el 15 de cada mes', [1, 15]],
+      ['Trimestral', 90, 1500, 'Acceso ilimitado al gimnasio durante 90 días', null],
+      ['Anual', 365, 5200, 'Acceso ilimitado al gimnasio durante 365 días', null],
     ]) {
-      await db.query('INSERT INTO tipo_membresia (nombre, duracion_dias, precio, detalles) VALUES ($1,$2,$3,$4) ON CONFLICT (nombre) DO NOTHING', [n, dias, precio, detalles]);
+      await db.query(
+        'INSERT INTO tipo_membresia (nombre, duracion_dias, precio, detalles, dias_disponibles) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (nombre) DO NOTHING',
+        [n, dias, precio, detalles, diasDisponibles]);
       await db.query('UPDATE tipo_membresia SET detalles = $2 WHERE nombre = $1 AND detalles IS NULL', [n, detalles]);
     }
 

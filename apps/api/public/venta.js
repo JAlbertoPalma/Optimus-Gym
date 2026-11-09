@@ -243,9 +243,12 @@ function pintarCotizacion() {
   caja.classList.toggle('bloqueada', !!q?.bloqueo);
   caja.classList.toggle('advertencia', !q?.bloqueo && !!q?.advertencia);
   const finActual = anterior ? fecha(anterior.fechaFin) : '';
-  if (q?.bloqueo) aviso($('#aviso-reemplazo'), 'error', anterior
-    ? `✘ No se puede vender: el plan ${q.plan.nombre} vencería el ${fecha(v.fin)}, antes que su membresía ${anterior.plan} (vence el ${finActual}). Elige un plan que cubra al menos hasta esa fecha.`
-    : '✘ ' + q.bloqueo.mensaje);
+  const faltan = anterior && hoy ? Math.round((Date.parse(anterior.fechaFin) - Date.parse(hoy)) / 86400000) : null;
+  const textoBloqueo = !q?.bloqueo || !anterior ? '✘ ' + (q?.bloqueo?.mensaje || '')
+    : q.bloqueo.codigo === 'MEMBRESIA_VIGENTE'
+      ? `✘ No se puede vender: su membresía ${anterior.plan} vence el ${finActual} (faltan ${faltan} días). Solo se puede reemplazar cuando falten menos de 7 días.`
+      : `✘ No se puede vender: el plan ${q.plan.nombre} vencería el ${fecha(v.fin)}, el mismo día o antes que su membresía ${anterior.plan} (vence el ${finActual}). Elige un plan que dure más.`;
+  if (q?.bloqueo) aviso($('#aviso-reemplazo'), 'error', textoBloqueo);
   else if (q?.advertencia) aviso($('#aviso-reemplazo'), 'info', anterior
     ? `⚠ El cliente tiene ${anterior.plan} vigente hasta el ${finActual}. Al cobrar se sobrescribirá su fecha de vencimiento por el ${fecha(v.fin)}.`
     : '⚠ ' + q.advertencia);
@@ -260,8 +263,7 @@ function pintarMetodos() {
   sel.innerHTML = estado.metodos.map((m) => `<option value="${esc(m)}" ${m === estado.metodo ? 'selected' : ''}>${esc(NOMBRE_METODO[m] || m)}</option>`).join('');
   const efectivo = estado.metodo === 'EFECTIVO';
   $('#campo-recibe').hidden = !efectivo;
-  $('#campo-referencia').hidden = efectivo;
-  $('#referencia-etiqueta').textContent = estado.metodo === 'TARJETA' ? 'No. de autorización del voucher' : 'Clave de rastreo de la transferencia';
+  $('#nota-pago-externo').hidden = efectivo;
 }
 
 // Muestra "· cambio $50.00" dentro del campo Recibe mientras se teclea
@@ -289,14 +291,16 @@ function validarAntesDeCobrar() {
   if (!estado.cliente.puedeComprar) return estado.cliente.motivoBloqueo;
   if (!estado.idTipo) return 'Selecciona un plan';
   if (!q) return 'No se pudo calcular el total; vuelve a seleccionar el plan';
-  if (q.bloqueo) return 'El plan elegido vence antes que la membresía actual del cliente; elige otro plan';
+  if (q.bloqueo) return q.bloqueo.codigo === 'MEMBRESIA_VIGENTE'
+    ? 'Al cliente aún le quedan 7 días o más de su membresía actual; no se puede reemplazar todavía'
+    : 'El plan elegido no vence después que la membresía actual del cliente; elige otro plan';
   if (!estado.metodos.includes(estado.metodo)) return 'Selecciona una forma de pago válida';
   if (estado.metodo === 'EFECTIVO') {
     const t = $('#recibe').value.trim();
     const n = Number(t);
     if (t === '' || !Number.isFinite(n) || n < 0) return 'Captura el importe que entrega el cliente';
     if (centavos(n) < centavos(q.total)) return 'El importe recibido es menor al total';
-  } else if (!$('#referencia').value.trim()) return 'Captura la referencia del pago';
+  }
   return null;
 }
 
@@ -323,7 +327,6 @@ async function cobrar() {
     idTipo: estado.idTipo,
     metodoPago: estado.metodo,
     importeRecibido: efectivo ? Number($('#recibe').value) : undefined,
-    referenciaPago: efectivo ? undefined : $('#referencia').value.trim(),
     totalEsperado: q.total,
   });
   bloquearCobro(false);
@@ -338,7 +341,7 @@ async function cobrar() {
   if (r.estado === 0) { aviso($('#mensaje-cobro'), 'error', '✘ No se pudo contactar al servidor. Puedes reintentar: la venta no se duplicará.'); return; }
   mostrarError(r.json);
   if (r.json.codigo === 'PRECIO_CAMBIO') { await cargarCatalogo(); cotizar(); }
-  if (r.json.codigo === 'PLAN_VENCE_ANTES') { await seleccionarClienteDeNuevo(); cotizar(); } // otra venta cambió su membresía
+  if (r.json.codigo === 'PLAN_VENCE_ANTES' || r.json.codigo === 'MEMBRESIA_VIGENTE') { await seleccionarClienteDeNuevo(); cotizar(); } // otra venta cambió su membresía
   if (r.json.codigo === 'NO_ENCONTRADO' || /^CLIENTE_/.test(r.json.codigo || '')) seleccionarClienteDeNuevo();
 }
 
@@ -386,7 +389,6 @@ function mostrarRecibo(rc, imprimir) {
         ${fila('Método de pago', NOMBRE_METODO[rc.metodoPago] || rc.metodoPago)}
         ${rc.importeRecibido !== null ? fila('Recibido', dinero(rc.importeRecibido)) : ''}
         ${rc.cambio !== null ? fila('Cambio', dinero(rc.cambio)) : ''}
-        ${rc.referenciaPago ? fila('Referencia', rc.referenciaPago) : ''}
         ${rc.estatus === 'CANCELADO' ? '<div class="centro"><strong>*** VENTA CANCELADA ***</strong></div>' : ''}
         <hr>
         ${fila('Atendió', `${rc.empleadoNombre} (${rc.empleadoUsuario})`)}
@@ -414,7 +416,6 @@ function reiniciar() {
   estado.cliente = null; estado.idTipo = null; estado.cotizacion = null;
   estado.metodo = 'EFECTIVO';
   estado.clave = crypto.randomUUID();
-  $('#referencia').value = '';
   $('#resultados-cliente').hidden = true;
   aviso($('#aviso-cliente'), 'info', '');
   limpiarErroresCampo();

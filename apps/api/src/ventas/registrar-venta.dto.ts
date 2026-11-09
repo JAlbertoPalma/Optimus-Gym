@@ -28,7 +28,5 @@ export class RegistrarVentaDto {
   @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }, { message: 'El importe recibido debe ser un número con máximo 2 decimales' })
   @Min(0, { message: 'El importe recibido no puede ser negativo' }) @Max(1_000_000, { message: 'Importe recibido fuera de rango' })
   importeRecibido?: number;
-  /** Número de autorización del voucher o clave de rastreo de la transferencia. */
-  @IsOptional() @Transform(recortar) @IsString() @MaxLength(60) referenciaPago?: string;
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Total esperado inválido' }) @Min(0) totalEsperado: number;
 }

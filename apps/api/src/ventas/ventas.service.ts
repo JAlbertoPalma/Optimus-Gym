@@ -6,8 +6,8 @@
 //
 // Vigencia: la membresía nueva REEMPLAZA a la anterior (no se apilan días). La "membresía actual" de un
 // cliente es siempre la ÚLTIMA que se le vendió; las anteriores quedan como historial y ya no dan acceso.
-// Si la nueva vencería ANTES que la vigente, la venta se rechaza (PLAN_VENCE_ANTES); si no, se advierte
-// que se sobrescribirá la fecha de vencimiento.
+// Una membresía vigente solo se reemplaza si le faltan menos de 7 días (si no → MEMBRESIA_VIGENTE) y si la
+// nueva vence DESPUÉS que ella (si no → PLAN_VENCE_ANTES); en ese caso se advierte que se sobrescribirá su vencimiento.
 //
 // Una venta = 1 fila en membresia_contratada (vigencia) + 1 fila en pago (cobro) + bitácora,
 // todo en UNA transacción: si algo falla no queda ni el cobro sin membresía ni la membresía sin cobro.
@@ -15,7 +15,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { ErrorNegocio } from '../comun/errores';
 import { SesionDemoService } from '../comun/sesion-demo.service';
-import { aCentavos, aPesos, calcularCambio, calcularVigencia, revisarReemplazo } from './calculos-venta';
+import { aCentavos, aPesos, calcularCambio, calcularVigencia, planDisponibleEn, revisarReemplazo } from './calculos-venta';
 import { CotizarVentaDto, METODOS_PAGO, RegistrarVentaDto } from './registrar-venta.dto';
 
 // Roles que pueden cobrar (tabla rol, ver db/semilla.ts)
@@ -44,9 +44,12 @@ export class VentasService {
   /** Planes activos, métodos de pago y quién atiende (se muestra en la barra lateral). */
   async catalogo() {
     const idEmpleado = await this.sesion.exigirRol(...ROLES_VENTA);
-    const planes = await this.ds.query(
-      `SELECT id_tipo AS "idTipo", nombre, duracion_dias AS "duracionDias", precio, detalles
+    const hoy = await this.hoy(this.ds);
+    const todos = await this.ds.query(
+      `SELECT id_tipo AS "idTipo", nombre, duracion_dias AS "duracionDias", precio, detalles, dias_disponibles AS "diasDisponibles"
          FROM tipo_membresia WHERE activa ORDER BY duracion_dias, nombre`);
+    // Planes con días del mes fijos (ej. "Precio especial" solo el 1 y el 15) se ocultan el resto de los días
+    const planes = todos.filter((p: any) => planDisponibleEn(p.diasDisponibles, hoy));
     const [atiende] = await this.ds.query(
       `SELECT trim(p.nombres || ' ' || p.apellido_paterno) AS nombre,
               (SELECT string_agg(r.nombre, ', ' ORDER BY r.nombre) FROM empleado_rol er JOIN rol r USING (id_rol)
@@ -79,8 +82,8 @@ export class VentasService {
 
   /**
    * Resumen del cobro sin guardar nada: precio, total y vigencia.
-   * No lanza error si el plan vence antes que la membresía actual: lo informa en "bloqueo" para que la
-   * pantalla lo muestre (registrar() sí lo rechaza). "advertencia" avisa que se sobrescribirá el vencimiento.
+   * No lanza error si la membresía actual no se puede reemplazar: lo informa en "bloqueo" ({ codigo, mensaje })
+   * para que la pantalla lo muestre (registrar() sí lo rechaza). "advertencia" avisa que se sobrescribirá el vencimiento.
    */
   async cotizar(dto: CotizarVentaDto) {
     await this.sesion.exigirRol(...ROLES_VENTA);
@@ -88,7 +91,7 @@ export class VentasService {
     const calc = await this.calcular(this.ds, dto.idTipo, cliente, await this.hoy(this.ds));
     return {
       plan: calc.plan, precioOriginal: aPesos(calc.precioCent), total: aPesos(calc.totalCent), vigencia: calc.vigencia,
-      bloqueo: calc.reemplazo.bloqueo ? { codigo: 'PLAN_VENCE_ANTES', mensaje: calc.reemplazo.bloqueo } : null,
+      bloqueo: calc.reemplazo.bloqueo,
       advertencia: calc.reemplazo.advertencia,
     };
   }
@@ -118,18 +121,17 @@ export class VentasService {
         const hoy = await this.hoy(m);
         const calc = await this.calcular(m, dto.idTipo, c, hoy);
 
-        // El plan nuevo vencería antes que la membresía vigente → el cliente perdería días ya pagados
-        if (calc.reemplazo.bloqueo) throw new ErrorNegocio('PLAN_VENCE_ANTES', calc.reemplazo.bloqueo, 409);
+        // A la membresía vigente aún le quedan 7 días o más, o el plan nuevo no vence después que ella
+        if (calc.reemplazo.bloqueo) throw new ErrorNegocio(calc.reemplazo.bloqueo.codigo, calc.reemplazo.bloqueo.mensaje, 409);
 
         // El precio cambió desde que se mostró el resumen → no cobrar un importe distinto al que vio el cliente
         if (aCentavos(dto.totalEsperado) !== calc.totalCent)
           throw new ErrorNegocio('PRECIO_CAMBIO', `El total cambió a $${aPesos(calc.totalCent).toFixed(2)}. Revisa el resumen y confirma de nuevo.`, 409,
             undefined, { total: aPesos(calc.totalCent) });
 
-        // Forma de pago
+        // Forma de pago. Tarjeta y transferencia se cobran fuera del sistema (terminal / banco): solo se registra el método.
         let recibidoCent: number | null = null;
         let cambioCent: number | null = null;
-        let referencia: string | null = null;
         if (dto.metodoPago === 'EFECTIVO') {
           if (dto.importeRecibido === undefined || dto.importeRecibido === null)
             throw new ErrorNegocio('IMPORTE_REQUERIDO', 'Captura el importe que entrega el cliente', 422, { importeRecibido: 'Obligatorio en efectivo' });
@@ -139,13 +141,6 @@ export class VentasService {
             throw new ErrorNegocio('IMPORTE_INSUFICIENTE',
               `El importe recibido ($${aPesos(recibidoCent).toFixed(2)}) es menor al total ($${aPesos(calc.totalCent).toFixed(2)})`, 422,
               { importeRecibido: 'Importe insuficiente' });
-        } else {
-          // Sin terminal ni pasarela integradas: solo se REGISTRA el cobro hecho fuera del sistema con su referencia.
-          referencia = dto.referenciaPago || null;
-          if (!referencia)
-            throw new ErrorNegocio('REFERENCIA_REQUERIDA',
-              dto.metodoPago === 'TARJETA' ? 'Captura el número de autorización del voucher' : 'Captura la clave de rastreo de la transferencia', 422,
-              { referenciaPago: 'Obligatorio para ' + dto.metodoPago.toLowerCase() });
         }
 
         const v = calc.vigencia!; // con cliente siempre hay vigencia
@@ -157,12 +152,12 @@ export class VentasService {
         etapa = 'venta';
         const [pago] = await m.query(
           `INSERT INTO pago (id_membresia, id_empleado, monto, descuento, metodo_pago, plan_nombre, plan_duracion_dias, precio_original,
-                             importe_recibido, cambio, referencia_pago, clave_idempotencia)
-           VALUES ($1,$2,$3,0,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id_pago, folio_recibo`,
+                             importe_recibido, cambio, clave_idempotencia)
+           VALUES ($1,$2,$3,0,$4,$5,$6,$7,$8,$9,$10) RETURNING id_pago, folio_recibo`,
           [mem.id_membresia, idEmpleado, aPesos(calc.totalCent), dto.metodoPago,
            calc.plan.nombre, calc.plan.duracionDias, aPesos(calc.precioCent),
            recibidoCent === null ? null : aPesos(recibidoCent), cambioCent === null ? null : aPesos(cambioCent),
-           referencia, dto.claveIdempotencia]);
+           dto.claveIdempotencia]);
         await m.query(
           `INSERT INTO registro_auditoria (id_empleado, id_persona, accion, detalle, entidad_afectada, id_registro_afectado)
            VALUES ($1,$2,'VENTA_MEMBRESIA',$3,'pago',$4)`,
@@ -254,12 +249,15 @@ export class VentasService {
   /** Núcleo del cálculo (lo comparten cotizar y registrar, así no puede haber dos versiones de la regla). */
   private async calcular(m: Conexion, idTipo: number, cliente: ClienteVenta | null, hoy: string) {
     const [plan] = await m.query(
-      `SELECT id_tipo AS "idTipo", nombre, duracion_dias AS "duracionDias", precio, detalles
+      `SELECT id_tipo AS "idTipo", nombre, duracion_dias AS "duracionDias", precio, detalles, dias_disponibles AS "diasDisponibles"
          FROM tipo_membresia WHERE id_tipo = $1 AND activa`, [idTipo]);
     if (!plan) throw new ErrorNegocio('PLAN_NO_DISPONIBLE', 'El plan seleccionado no existe o ya no está disponible', 404);
+    // Se revisa también aquí: la pantalla pudo quedar abierta de un día para otro (ej. del 15 al 16)
+    if (!planDisponibleEn(plan.diasDisponibles, hoy))
+      throw new ErrorNegocio('PLAN_NO_DISPONIBLE', `El plan ${plan.nombre} solo se vende los días ${plan.diasDisponibles.join(' y ')} de cada mes`, 404);
 
     let vigencia = null;
-    let reemplazo: { bloqueo: string | null; advertencia: string | null } = { bloqueo: null, advertencia: null };
+    let reemplazo: ReturnType<typeof revisarReemplazo> = { bloqueo: null, advertencia: null };
     if (cliente) {
       const actual = await this.membresiaActual(cliente.id_persona, m);
       vigencia = calcularVigencia(hoy, actual?.fechaFin ?? null, plan.duracionDias);
@@ -281,7 +279,6 @@ export class VentasService {
               to_char(mc.fecha_inicio,'YYYY-MM-DD') AS "fechaInicio", to_char(mc.fecha_fin,'YYYY-MM-DD') AS "fechaFin",
               coalesce(pa.precio_original, pa.monto + pa.descuento) AS "precioOriginal",
               pa.monto AS total, pa.metodo_pago AS "metodoPago", pa.importe_recibido AS "importeRecibido", pa.cambio,
-              pa.referencia_pago AS "referenciaPago",
               pc.codigo AS "clienteCodigo",
               trim(pc.nombres || ' ' || pc.apellido_paterno || ' ' || coalesce(pc.apellido_materno,'')) AS "clienteNombre",
               e.nombre_usuario AS "empleadoUsuario", trim(pe.nombres || ' ' || pe.apellido_paterno) AS "empleadoNombre"
