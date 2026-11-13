@@ -98,10 +98,18 @@ export class VentasService {
 
   /** CU-04 FB: registra la venta. Idempotente por claveIdempotencia (doble clic / reintento → misma venta). */
   async registrar(dto: RegistrarVentaDto) {
-    const idEmpleado = await this.sesion.exigirRol(...ROLES_VENTA);
-
-    // ¿Esta misma operación ya se registró? (reintento después de un error de red, doble envío…)
-    const previa = await this.ventaPorClave(dto.claveIdempotencia, dto.codigoCliente, this.ds);
+    // Estas dos consultas también pueden fallar si PostgreSQL no responde. Antes estaban fuera del try de abajo
+    // y el error llegaba como «Error interno del servidor» en vez de BD_NO_DISPONIBLE (H-04).
+    let idEmpleado: number;
+    let previa: string | null;
+    try {
+      idEmpleado = await this.sesion.exigirRol(...ROLES_VENTA);
+      // ¿Esta misma operación ya se registró? (reintento después de un error de red, doble envío…)
+      previa = await this.ventaPorClave(dto.claveIdempotencia, dto.codigoCliente, this.ds);
+    } catch (e) {
+      if (e instanceof ErrorNegocio) throw e;
+      throw this.errorPersistencia(e, 'venta');
+    }
     if (previa) return this.respuesta(previa, true);
 
     let etapa = 'venta'; // para decir qué falló si PostgreSQL rechaza algo
@@ -301,7 +309,10 @@ export class VentasService {
   /** Convierte un error inesperado de PostgreSQL en un mensaje claro. La transacción ya hizo ROLLBACK. */
   private errorPersistencia(e: any, etapa: string) {
     const codigo = String(e?.code ?? '');
-    if (['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', '57P01', '57P03'].includes(codigo) || codigo.startsWith('08'))
+    // Si el servicio de PostgreSQL se detiene con conexiones abiertas, el driver lanza un error SIN código
+    // («Connection terminated unexpectedly»); se reconoce por el mensaje.
+    const sinConexion = /Connection terminated|timeout exceeded when trying to connect/i.test(String(e?.message ?? ''));
+    if (sinConexion || ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', '57P01', '57P03'].includes(codigo) || codigo.startsWith('08'))
       return new ErrorNegocio('BD_NO_DISPONIBLE', 'No hay conexión con la base de datos. La venta NO se registró; intenta de nuevo.', 503);
     console.error(e);
     return etapa === 'membresia'

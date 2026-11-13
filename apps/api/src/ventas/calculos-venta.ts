@@ -6,8 +6,9 @@
 // Fechas: siempre texto 'AAAA-MM-DD' y aritmética en UTC, así el huso horario del servidor
 // no recorre un día. La fecha "hoy" la da PostgreSQL (CURRENT_DATE) para que coincida con la BD.
 
-/** "600.00" (NUMERIC de PostgreSQL) o 600 → 60000 centavos. */
-export const aCentavos = (v: string | number) => Math.floor(Number(v) * 100);
+/** "600.00" (NUMERIC de PostgreSQL) o 600 → 60000 centavos.
+ *  Se REDONDEA (no se trunca): 600.30 * 100 = 60029.999… en JavaScript y con Math.floor se perdía un centavo (H-03). */
+export const aCentavos = (v: string | number) => Math.round(Number(v) * 100);
 /** 60000 → 600 (pesos con dos decimales como número). */
 export const aPesos = (c: number) => c / 100;
 
@@ -41,7 +42,8 @@ export type TipoVigencia = 'NUEVA' | 'REEMPLAZO' | 'REACTIVACION';
 export function calcularVigencia(hoy: string, finActual: string | null, duracionDias: number) {
   const tipo: TipoVigencia = !finActual ? 'NUEVA' : finActual >= hoy ? 'REEMPLAZO' : 'REACTIVACION';
   const inicio = hoy;
-  return { tipo, inicio, fin: sumarDias(inicio, duracionDias) };
+  // − 1 porque el día de inicio ya cuenta: una Visita (1 día) vence el mismo día y una Mensual (30) el día 30 (H-01)
+  return { tipo, inicio, fin: sumarDias(inicio, duracionDias - 1) };
 }
 
 /** Días de 'desde' a 'hasta' (fechas 'AAAA-MM-DD'). Ej.: del 2026-11-09 al 2026-11-15 → 6. */
@@ -90,7 +92,8 @@ export function revisarReemplazo(hoy: string, finActual: string | null, finNuevo
   };
 }
 
-/** Cambio en centavos para pago en efectivo, o null si el importe no alcanza. */
+/** Cambio en centavos para pago en efectivo, o null si el importe no alcanza.
+ *  El importe exacto SÍ alcanza (cambio 0): solo un importe MENOR al total es insuficiente (H-02). */
 export function calcularCambio(totalCent: number, recibidoCent: number): number | null {
-  return recibidoCent <= totalCent ? null : recibidoCent - totalCent;
+  return recibidoCent < totalCent ? null : recibidoCent - totalCent;
 }
