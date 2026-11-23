@@ -14,6 +14,19 @@ import { CALIDAD_MINIMA, ComparadorHuellasService, UMBRAL_DUPLICADO } from '../h
 import { ActualizarClienteDto, DarDeBajaDto } from './gestionar-cliente.dto';
 import { HuellaDto, RegistrarClienteDto } from './registrar-cliente.dto';
 
+// O-04: letras con acento y su equivalente sin acento (misma posición en ambas cadenas).
+// Se usan en SQL (translate) y en TypeScript (normalizarTexto) para que los dos lados coincidan.
+const ACENTOS = 'áéíóúüñàèìòù';
+const SIN_ACENTOS = 'aeiouunaeiou';
+
+/** O-04: minúsculas y sin acentos. "López" → "lopez", "ÑUÑEZ" → "nunez". */
+export function normalizarTexto(texto: string): string {
+  return [...texto.toLowerCase()].map((ch) => {
+    const i = ACENTOS.indexOf(ch);
+    return i >= 0 ? SIN_ACENTOS[i] : ch;
+  }).join('');
+}
+
 @Injectable()
 export class ClientesService {
   // Todas estas dependencias las inyecta NestJS (ver clientes.module.ts y app.module.ts)
@@ -135,9 +148,13 @@ export class ClientesService {
     const filtros: string[] = []; // condiciones que se unirán con AND
     if (q?.trim()) {
       // ILIKE = LIKE sin distinguir mayúsculas; los % significan "cualquier texto antes/después"
+      // $1: código, teléfono y correo se comparan tal cual (sin cambios).
       params.push(`%${q.trim()}%`);
+      // $2 (O-04): el nombre completo se compara SIN acentos ni mayúsculas, así "ana lopez" encuentra a "Ana López".
+      // Se normalizan los dos lados: el texto buscado aquí en TypeScript y la columna en SQL con translate(lower(...)).
+      params.push(`%${normalizarTexto(q.trim())}%`);
       filtros.push(`(p.codigo ILIKE $1 OR p.telefono ILIKE $1 OR p.correo ILIKE $1
-        OR (p.nombres || ' ' || p.apellido_paterno || ' ' || coalesce(p.apellido_materno,'')) ILIKE $1)`);
+        OR translate(lower(p.nombres || ' ' || p.apellido_paterno || ' ' || coalesce(p.apellido_materno,'')), '${ACENTOS}', '${SIN_ACENTOS}') LIKE $2)`);
     }
     if (estatus === 'ACTIVO' || estatus === 'INACTIVO') {
       params.push(estatus);
