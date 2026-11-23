@@ -1,4 +1,4 @@
-// Pruebas de humo del ALTA de cliente (CU-02: FB-01, FA-01, FA-02, FA-05, FA-06, FA-08 y SF-01).
+// Pruebas de humo del ALTA de cliente (CU-02: FB-01, FA-01, FA-02, FA-05, FA-06, FA-08, SF-01 y O-04).
 // Se ejecutan con la API encendida:  npm run api:probar
 // Son RE-EJECUTABLES: cada corrida usa teléfono, correo y huella ALEATORIOS.
 import 'dotenv/config';
@@ -62,6 +62,26 @@ const alta = (o: any = {}) => ({
   chequear('SF-01 búsqueda por nombre devuelve ≥ 2', r.estado === 200 && r.json.length >= 2, JSON.stringify(r.json));
   r = await llamar('GET', '/api/v1/clientes?estatus=ACTIVO');
   chequear('SF-01 filtro por estatus', r.estado === 200 && Array.isArray(r.json));
+
+  // O-04 (CP-27): la búsqueda por nombre no distingue acentos ni mayúsculas.
+  // Se da de alta un cliente con acentos y un apellido único por corrida (los dígitos del sufijo pasados a letras),
+  // para no depender de los muchos "Ana López" que dejan las corridas anteriores.
+  const letras = [...sufijo].map((d) => 'abcdefghij'[Number(d)]).join('');
+  const altaAcentos = await llamar('POST', '/api/v1/clientes', alta({
+    nombres: 'Íñigo', apellidoPaterno: 'Núñez', apellidoMaterno: 'Ruíz' + letras,
+    telefono: '644' + sufijo + '8', correo: `h${sufijo}@correo.com`,
+    huella: { dedo: 4, plantillaBase64: huellaNueva(), calidad: 90 } }));
+  const codigoAcentos = altaAcentos.json.codigo;
+  const contiene = (lista: any) => Array.isArray(lista) && lista.some((c: any) => c.codigo === codigoAcentos);
+  r = await llamar('GET', '/api/v1/clientes?q=' + encodeURIComponent('inigo nunez ruiz' + letras));
+  chequear('O-04 buscar sin acentos encuentra al cliente con acentos', !!codigoAcentos && r.estado === 200 && contiene(r.json),
+    JSON.stringify({ alta: altaAcentos.json, busqueda: r.json }));
+  r = await llamar('GET', '/api/v1/clientes?q=' + encodeURIComponent('iÑIgO NúñEZ rUIZ' + letras.toUpperCase()));
+  chequear('O-04 buscar con mayúsculas y minúsculas mezcladas lo encuentra', !!codigoAcentos && r.estado === 200 && contiene(r.json),
+    JSON.stringify(r.json));
+  r = await llamar('GET', '/api/v1/clientes?q=' + encodeURIComponent('Zyxwq Qwxyz ' + sufijo));
+  chequear('O-04 búsqueda sin coincidencias devuelve 0', r.estado === 200 && Array.isArray(r.json) && r.json.length === 0,
+    JSON.stringify(r.json));
 
   console.log(`\nResultado: ${ok} correctas, ${fallos} fallidas`);
   // Se marca el código de salida y se deja terminar el proceso solo (sin process.exit()):
